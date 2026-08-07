@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FocusTrack · Admin</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📊</text></svg>">
+<style>
+  :root{
+    --bg:#0f1115; --card:#171a21; --line:#262a34; --txt:#e9ecf1; --dim:#98a0b0;
+    --accent:#4f9cf9; --good:#3ecf8e; --warn:#f5a524; --bad:#f45b69;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,sans-serif;padding:24px 18px 60px}
+  .wrap{max-width:1120px;margin:0 auto}
+  h1{font-size:22px;margin:0}
+  h2{font-size:14px;color:var(--dim);margin:0 0 16px;font-weight:600;letter-spacing:.02em}
+  .top{display:flex;flex-wrap:wrap;gap:12px;justify-content:space-between;align-items:center;margin-bottom:20px}
+  .controls{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+  select,input[type=date],input[type=text],input[type=password]{
+    background:#0f1218;border:1px solid var(--line);color:var(--txt);border-radius:9px;
+    padding:9px 11px;font-size:14px;font-family:inherit;outline:none}
+  button{background:var(--accent);color:#04101f;border:none;border-radius:9px;padding:10px 15px;
+    font-size:14px;font-weight:600;cursor:pointer;font-family:inherit}
+  button.ghost{background:transparent;border:1px solid var(--line);color:var(--dim)}
+  a.ghost{background:transparent;border:1px solid var(--line);color:var(--dim);border-radius:9px;
+    padding:10px 15px;font-size:14px;text-decoration:none;display:inline-block}
+  .grid{display:grid;gap:14px}
+  .kpis{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
+  .cols{grid-template-columns:1.35fr 1fr;align-items:start}
+  @media(max-width:860px){.cols{grid-template-columns:1fr}}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px}
+  .kpi b{display:block;font-size:30px;letter-spacing:-1px;line-height:1.15}
+  .kpi span{font-size:12px;color:var(--dim)}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  th{text-align:left;color:var(--dim);font-weight:600;font-size:12px;padding:0 8px 10px;
+     border-bottom:1px solid var(--line);white-space:nowrap}
+  td{padding:11px 8px;border-bottom:1px solid var(--line)}
+  tr:last-child td{border-bottom:none}
+  .score{display:inline-block;min-width:44px;text-align:center;border-radius:7px;padding:4px 8px;
+    font-weight:700;font-size:13px}
+  .bar{height:9px;border-radius:5px;background:var(--accent);min-width:3px}
+  .barrow{display:flex;align-items:center;gap:10px;padding:7px 0;font-size:13px}
+  .barrow .lbl{width:44%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dim)}
+  .barrow .val{width:36px;text-align:right;color:var(--dim);font-size:12px}
+  .cols3{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px}
+  .hbars{display:flex;align-items:flex-end;gap:5px;height:130px;margin-top:6px}
+  .hbars .h{flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:5px}
+  .hbars .h i{width:100%;background:var(--accent);border-radius:4px 4px 0 0;display:block;min-height:2px}
+  .hbars .h small{font-size:10px;color:var(--dim)}
+  .feed .f{padding:9px 0;border-bottom:1px solid var(--line);font-size:13px;display:flex;
+    justify-content:space-between;gap:10px}
+  .feed .f:last-child{border-bottom:none}
+  .muted{color:var(--dim)}
+  .empty{color:var(--dim);font-size:13px;padding:14px 0;text-align:center}
+  .pill{font-size:11px;border:1px solid var(--line);border-radius:20px;padding:2px 9px;color:var(--dim)}
+  .userrow{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
+  .err{color:var(--bad);font-size:13px;min-height:16px}
+  .hidden{display:none !important}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <div>
+      <h1>Team Focus Dashboard</h1>
+      <div class="muted" style="font-size:13px" id="rangeLabel"></div>
+    </div>
+    <div class="controls">
+      <select id="preset">
+        <option value="today">Today</option>
+        <option value="7" selected>Last 7 days</option>
+        <option value="30">Last 30 days</option>
+        <option value="custom">Custom…</option>
+      </select>
+      <input type="date" id="from" class="hidden">
+      <input type="date" id="to" class="hidden">
+      <select id="userFilter"><option value="">All employees</option></select>
+      <button id="refresh">Refresh</button>
+      <a class="ghost" id="csv" href="#">Export CSV</a>
+      <a class="ghost" href="/">My timer</a>
+    </div>
+  </div>
+
+  <div class="grid kpis" id="kpis"></div>
+
+  <div style="height:14px"></div>
+  <div class="grid cols">
+    <div class="card">
+      <h2>EMPLOYEES</h2>
+      <table id="empTable">
+        <thead><tr>
+          <th>Name</th><th>Focus score</th><th>Sessions</th><th>Completed</th>
+          <th>Focus time</th><th>Distr./hr</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+      <div class="empty hidden" id="empEmpty">No sessions in this range.</div>
+    </div>
+
+    <div class="card">
+      <h2>TOP DISTRACTIONS</h2>
+      <div id="reasons"></div>
+      <div style="height:18px"></div>
+      <h2>BY CATEGORY</h2>
+      <div id="cats"></div>
+    </div>
+  </div>
+
+  <div style="height:14px"></div>
+  <div class="cols3">
+    <div class="card">
+      <h2>BEST HOURS OF THE DAY</h2>
+      <div class="hbars" id="hours"></div>
+      <div class="muted" style="font-size:12px;margin-top:10px" id="hoursNote"></div>
+    </div>
+    <div class="card">
+      <h2>DAILY FOCUS MINUTES</h2>
+      <div class="hbars" id="daily"></div>
+      <div class="muted" style="font-size:12px;margin-top:10px" id="dailyNote"></div>
+    </div>
+    <div class="card feed">
+      <h2>LATEST DISTRACTIONS</h2>
+      <div id="feed"></div>
+    </div>
+  </div>
+
+  <div style="height:14px"></div>
+  <div class="card">
+    <h2>MANAGE EMPLOYEES</h2>
+    <div class="userrow">
+      <input type="text" id="nName" placeholder="Name">
+      <input type="password" id="nPin" placeholder="PIN (4+ digits)">
+      <input type="text" id="nTeam" placeholder="Team (optional)">
+      <select id="nRole"><option value="employee">Employee</option><option value="admin">Admin</option></select>
+      <button id="addUser">Add</button>
+      <span class="err" id="userErr"></span>
+    </div>
+    <table id="userTable">
+      <thead><tr><th>Name</th><th>Role</th><th>Team</th><th>Status</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const token = localStorage.getItem('ft_token');
+if (!token) location.href = '/';
+
+const api = async (p, o = {}) => {
+  const r = await fetch(p, { ...o, headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token, ...(o.headers || {}) } });
+  const d = await r.json().catch(() => ({}));
+  if (r.status === 401) { localStorage.removeItem('ft_token'); location.href = '/'; }
+  if (!r.ok) throw new Error(d.error || 'Error');
+  return d;
+};
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const scoreColor = (v) => v >= 80 ? 'var(--good)' : v >= 60 ? 'var(--warn)' : 'var(--bad)';
+const fmtMin = (m) => m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`;
+
+function currentRange() {
+  const p = $('#preset').value;
+  const iso = (d) => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+  const today = iso(new Date());
+  if (p === 'today') return { from: today, to: today };
+  if (p === 'custom') return { from: $('#from').value || today, to: $('#to').value || today };
+  const n = Number(p);
+  return { from: iso(new Date(Date.now() - (n - 1) * 86400000)), to: today };
+}
+
+function qs() {
+  const { from, to } = currentRange();
+  const u = $('#userFilter').value;
+  return `from=${from}&to=${to}${u ? '&user_id=' + u : ''}`;
+}
+
+$('#preset').onchange = () => {
+  const custom = $('#preset').value === 'custom';
+  $('#from').classList.toggle('hidden', !custom);
+  $('#to').classList.toggle('hidden', !custom);
+  if (!custom) load();
+};
+$('#from').onchange = $('#to').onchange = load;
+$('#userFilter').onchange = load;
+$('#refresh').onclick = load;
+$('#csv').onclick = async (e) => {
+  e.preventDefault();
+  const r = await fetch(`/api/admin/export.csv?${qs()}`, { headers: { Authorization: 'Bearer ' + token } });
+  const blob = await r.blob();
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `focustrack_${currentRange().from}_to_${currentRange().to}.csv`;
+  a.click();
+};
+
+function barList(el, items, labelKey, valueKey, color) {
+  if (!items.length) { el.innerHTML = '<div class="empty">Nothing logged 🎉</div>'; return; }
+  const max = Math.max(...items.map((i) => i[valueKey]));
+  el.innerHTML = items.map((i) => `
+    <div class="barrow">
+      <span class="lbl" title="${esc(i[labelKey])}">${esc(i[labelKey])}</span>
+      <span style="flex:1"><span class="bar" style="width:${(i[valueKey] / max) * 100}%;background:${color}"></span></span>
+      <span class="val">${i[valueKey]}</span>
+    </div>`).join('');
+}
+
+function colBars(el, items, valueKey, labelFn, color) {
+  if (!items.length) { el.innerHTML = '<div class="empty">No data</div>'; return; }
+  const max = Math.max(...items.map((i) => i[valueKey]), 1);
+  el.innerHTML = items.map((i) => `
+    <div class="h" title="${labelFn(i)}: ${i[valueKey]}">
+      <i style="height:${Math.max(2, (i[valueKey] / max) * 105)}px;background:${color}"></i>
+      <small>${labelFn(i)}</small>
+    </div>`).join('');
+}
+
+async function load() {
+  const d = await api(`/api/admin/stats?${qs()}`);
+  $('#rangeLabel').textContent = `${d.range.from} → ${d.range.to}`;
+  const t = d.totals;
+
+  $('#kpis').innerHTML = [
+    ['Team focus score', t.focusScore === null ? '—' : t.focusScore, scoreColor(t.focusScore ?? 0)],
+    ['Sessions', t.sessions, 'var(--txt)'],
+    ['Completion rate', t.sessions ? t.completionRate + '%' : '—', 'var(--txt)'],
+    ['Focused hours', t.focusedHours, 'var(--txt)'],
+    ['Distractions', t.distractions, 'var(--txt)'],
+    ['Distractions / hr', t.distractionsPerHour, t.distractionsPerHour > 4 ? 'var(--bad)' : 'var(--txt)'],
+    ['Active employees', t.activeEmployees, 'var(--txt)'],
+  ].map(([label, val, color]) =>
+    `<div class="card kpi"><b style="color:${color}">${val}</b><span>${label}</span></div>`).join('');
+
+  const tb = $('#empTable').querySelector('tbody');
+  $('#empEmpty').classList.toggle('hidden', d.employees.length > 0);
+  tb.innerHTML = d.employees.map((e) => `
+    <tr>
+      <td>${esc(e.name)} ${e.team ? `<span class="pill">${esc(e.team)}</span>` : ''}</td>
+      <td><span class="score" style="background:${scoreColor(e.focusScore)}22;color:${scoreColor(e.focusScore)}">${e.focusScore}</span></td>
+      <td>${e.sessions}</td>
+      <td>${e.completed} <span class="muted">(${e.completionRate}%)</span></td>
+      <td>${fmtMin(e.focusedMinutes)}</td>
+      <td>${e.distractionsPerHour}</td>
+    </tr>`).join('');
+
+  barList($('#reasons'), d.topReasons, 'reason', 'count', 'var(--warn)');
+  barList($('#cats'), d.categories, 'category', 'count', 'var(--accent)');
+
+  colBars($('#hours'), d.hours, 'focusedMinutes', (h) => String(h.hour).padStart(2, '0'), 'var(--accent)');
+  const best = [...d.hours].sort((a, b) => (b.completed / (b.sessions || 1)) - (a.completed / (a.sessions || 1)))[0];
+  $('#hoursNote').textContent = best
+    ? `Best completion rate at ${String(best.hour).padStart(2, '0')}:00 — ${Math.round((best.completed / best.sessions) * 100)}% of sessions finished.`
+    : '';
+
+  colBars($('#daily'), d.daily, 'focusedMinutes', (x) => x.date.slice(5), 'var(--good)');
+  const totalDays = d.daily.length || 1;
+  $('#dailyNote').textContent =
+    `Average ${Math.round(d.daily.reduce((a, x) => a + x.focusedMinutes, 0) / totalDays)} focus min/day across the team.`;
+
+  $('#feed').innerHTML = d.recentDistractions.length
+    ? d.recentDistractions.map((f) => `
+        <div class="f">
+          <span>${esc(f.reason)}</span>
+          <span class="muted" style="white-space:nowrap">${esc(f.user.split(' ')[0])} · ${new Date(f.at).toLocaleString([], { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
+        </div>`).join('')
+    : '<div class="empty">No distractions logged 🎉</div>';
+}
+
+async function loadUsers() {
+  const { users } = await api('/api/admin/users');
+  const sel = $('#userFilter');
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">All employees</option>' +
+    users.filter((u) => u.active).map((u) => `<option value="${u.id}">${esc(u.name)}</option>`).join('');
+  sel.value = cur;
+
+  $('#userTable').querySelector('tbody').innerHTML = users.map((u) => `
+    <tr>
+      <td>${esc(u.name)}</td>
+      <td class="muted">${u.role}</td>
+      <td class="muted">${esc(u.team) || '—'}</td>
+      <td>${u.active ? '<span style="color:var(--good)">active</span>' : '<span class="muted">disabled</span>'}</td>
+      <td style="text-align:right;white-space:nowrap">
+        <button class="ghost" data-pin="${u.id}">Reset PIN</button>
+        <button class="ghost" data-tog="${u.id}" data-active="${u.active}">${u.active ? 'Disable' : 'Enable'}</button>
+      </td>
+    </tr>`).join('');
+}
+
+$('#userTable').onclick = async (e) => {
+  const pin = e.target.dataset.pin, tog = e.target.dataset.tog;
+  try {
+    if (pin) {
+      const v = prompt('New PIN (4+ digits):');
+      if (!v) return;
+      await api(`/api/admin/users/${pin}`, { method: 'PATCH', body: JSON.stringify({ pin: v }) });
+      alert('PIN updated.');
+    }
+    if (tog) {
+      await api(`/api/admin/users/${tog}`, {
+        method: 'PATCH', body: JSON.stringify({ active: e.target.dataset.active !== '1' }),
+      });
+      loadUsers();
+    }
+  } catch (err) { alert(err.message); }
+};
+
+$('#addUser').onclick = async () => {
+  $('#userErr').textContent = '';
+  try {
+    await api('/api/admin/users', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: $('#nName').value, pin: $('#nPin').value,
+        team: $('#nTeam').value, role: $('#nRole').value,
+      }),
+    });
+    $('#nName').value = $('#nPin').value = $('#nTeam').value = '';
+    loadUsers();
+  } catch (e) { $('#userErr').textContent = e.message; }
+};
+
+(async () => {
+  const me = await api('/api/me');
+  if (me.user.role !== 'admin') { location.href = '/'; return; }
+  await loadUsers();
+  await load();
+})();
+</script>
+</body>
+</html>

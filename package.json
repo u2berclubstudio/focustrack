@@ -1,0 +1,20 @@
+{
+  "name": "focustrack",
+  "version": "1.0.0",
+  "description": "Team focus-session tracker with distraction logging and admin dashboard",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js",
+    "seed": "node seed.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  },
+  "optionalDependencies": {
+    "better-sqlite3": "^11.5.0"
+  }
+}
