@@ -6,6 +6,7 @@ const express = require('express');
 const { db, hashPin, verifyPin, nowISO } = require('./db');
 
 const PORT = Number(process.env.PORT || 3000);
+const HOST = process.env.HOST || '127.0.0.1';
 // Minutes to add to UTC to get your local business time. India = 330.
 const TZ_OFFSET = Number(process.env.TZ_OFFSET_MINUTES || 330);
 const TOKEN_DAYS = 30;
@@ -463,7 +464,9 @@ setInterval(() => {
 }, 6 * 3600 * 1000).unref();
 
 if (require.main === module) {
-  app.listen(PORT, () => console.log(`FocusTrack running on http://localhost:${PORT}`));
+  // Bind to loopback only: nginx is the sole way in, so the app is never
+  // reachable over plain HTTP on its raw port.
+  app.listen(PORT, HOST, () => console.log(`FocusTrack running on http://${HOST}:${PORT}`));
 }
 
 module.exports = app;
