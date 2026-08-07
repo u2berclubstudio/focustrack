@@ -3,391 +3,187 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>FocusTrack</title>
+<title>FocusTrack — focus tracking for teams</title>
+<link rel="stylesheet" href="/style.css">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⏱️</text></svg>">
 <style>
-  :root{
-    --bg:#0f1115; --card:#171a21; --line:#262a34; --txt:#e9ecf1; --dim:#98a0b0;
-    --accent:#4f9cf9; --good:#3ecf8e; --warn:#f5a524; --bad:#f45b69; --radius:16px;
+  body{display:flex;flex-direction:column;align-items:center;padding:34px 16px 60px}
+  .wrap{width:100%;max-width:480px}
+  .hero{text-align:center;margin-bottom:26px}
+  .hero h1{font-size:30px;letter-spacing:-1px;margin-bottom:8px}
+  .hero p{color:var(--dim);font-size:15px;line-height:1.55;margin:0}
+  .feats{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:22px 0 6px}
+  .feat{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}
+  .feat b{display:block;font-size:13px;margin-bottom:4px}
+  .feat span{font-size:12px;color:var(--dim);line-height:1.45}
+  .slugline{display:flex;align-items:center;gap:0}
+  .slugline .pre{
+    background:#0f1218;border:1px solid var(--line);border-right:none;color:var(--dim);
+    padding:13px 0 13px 13px;border-radius:12px 0 0 12px;font-size:14px;white-space:nowrap
   }
-  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-  body{margin:0;background:var(--bg);color:var(--txt);
-    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,sans-serif;
-    min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:20px 16px 48px}
-  .wrap{width:100%;max-width:460px}
-  h1{font-size:20px;margin:0 0 2px;letter-spacing:-.3px}
-  .sub{color:var(--dim);font-size:13px;margin:0 0 22px}
-  .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:20px;margin-bottom:14px}
-  label{display:block;font-size:13px;color:var(--dim);margin-bottom:8px;font-weight:500}
-  input,textarea{width:100%;background:#0f1218;border:1px solid var(--line);color:var(--txt);
-    border-radius:12px;padding:14px;font-size:16px;font-family:inherit;outline:none}
-  input:focus,textarea:focus{border-color:var(--accent)}
-  textarea{resize:none}
-  .chips{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:8px}
-  .chip{background:#0f1218;border:1px solid var(--line);color:var(--dim);border-radius:12px;
-    padding:12px 0;text-align:center;font-size:15px;cursor:pointer;font-weight:600}
-  .chip.on{background:var(--accent);border-color:var(--accent);color:#04101f}
-  button{font-family:inherit}
-  .btn{width:100%;border:none;border-radius:12px;padding:16px;font-size:16px;font-weight:600;
-    cursor:pointer;background:var(--accent);color:#04101f;margin-top:16px}
-  .btn:active{transform:scale(.99)}
-  .btn.ghost{background:transparent;border:1px solid var(--line);color:var(--dim)}
-  .btn.warn{background:var(--warn);color:#2a1a00}
-  .btn.good{background:var(--good);color:#03281a}
-  .btn.bad{background:transparent;border:1px solid var(--bad);color:var(--bad)}
-  .row{display:flex;gap:10px}
-  .row .btn{flex:1}
-  .timer{font-size:64px;font-weight:700;text-align:center;letter-spacing:-2px;
-    font-variant-numeric:tabular-nums;margin:6px 0 2px}
-  .ring{display:block;margin:0 auto}
-  .task-now{text-align:center;color:var(--dim);font-size:14px;margin-bottom:4px;
-    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;text-align:center}
-  .stats div b{display:block;font-size:20px}
-  .stats div span{font-size:11px;color:var(--dim)}
-  .list{font-size:13px}
-  .list .item{display:flex;justify-content:space-between;gap:10px;padding:9px 0;border-bottom:1px solid var(--line)}
-  .list .item:last-child{border-bottom:none}
-  .list .item span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .dot{width:7px;height:7px;border-radius:50%;display:inline-block;margin-right:7px;vertical-align:middle}
-  .err{color:var(--bad);font-size:13px;margin-top:10px;min-height:16px}
-  .top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:18px}
-  .top a{color:var(--dim);font-size:12px;text-decoration:none;border:1px solid var(--line);
-    padding:6px 10px;border-radius:8px;margin-left:6px}
-  .hidden{display:none !important}
-  .modal{position:fixed;inset:0;background:rgba(6,8,12,.82);display:flex;align-items:flex-end;
-    justify-content:center;padding:16px;z-index:9}
-  .modal .card{width:100%;max-width:460px;margin:0}
-  .quick{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
-  .quick button{background:#0f1218;border:1px solid var(--line);color:var(--dim);
-    border-radius:20px;padding:8px 13px;font-size:13px;cursor:pointer}
-  @media(min-width:520px){.modal{align-items:center}}
+  .slugline input{border-radius:0 12px 12px 0;border-left:none;padding-left:2px}
+  .hint{font-size:12px;margin-top:7px;min-height:16px}
+  .foot{text-align:center;margin-top:22px;font-size:13px}
+  .foot a{color:var(--dim)}
+  .done{text-align:center}
+  .done .big{font-size:46px;margin-bottom:8px}
+  .urlbox{
+    background:#0f1218;border:1px solid var(--line);border-radius:12px;padding:14px;
+    margin:12px 0;word-break:break-all;font-size:14px
+  }
 </style>
 </head>
 <body>
 <div class="wrap">
 
-  <!-- LOGIN -->
-  <section id="loginView">
+  <div class="hero">
     <h1>FocusTrack</h1>
-    <p class="sub">Sign in to start your focus session</p>
-    <div class="card">
-      <label>Your name</label>
-      <input id="lName" autocomplete="username" placeholder="e.g. Ravi">
-      <div style="height:14px"></div>
-      <label>PIN</label>
-      <input id="lPin" type="password" inputmode="numeric" autocomplete="current-password" placeholder="4-digit PIN">
-      <button class="btn" id="loginBtn">Sign in</button>
-      <div class="err" id="loginErr"></div>
-    </div>
-  </section>
+    <p>Your team logs what they're working on, works in timed blocks, and taps one button when something pulls them away. You get to see where the day actually goes.</p>
+  </div>
 
-  <!-- APP -->
-  <section id="appView" class="hidden">
-    <div class="top">
-      <div>
-        <h1 id="hello">Hi</h1>
-        <p class="sub" id="dateLine"></p>
+  <div class="feats">
+    <div class="feat"><b>Timed work blocks</b><span>15, 30, 45 or 60 minutes. 30 by default.</span></div>
+    <div class="feat"><b>One-tap distraction log</b><span>The timer keeps running — no punishment for honesty.</span></div>
+    <div class="feat"><b>Focus score</b><span>Completion rate and interruptions per hour, per person.</span></div>
+    <div class="feat"><b>Export anytime</b><span>Every session to CSV whenever you want it.</span></div>
+  </div>
+
+  <!-- SIGNUP -->
+  <div class="card" id="signupCard">
+    <h2>CREATE YOUR WORKSPACE</h2>
+
+    <label>Invite code</label>
+    <input id="code" placeholder="XXXX-XXXX" autocapitalize="characters" autocomplete="off">
+    <div class="gap"></div>
+
+    <label>Business name</label>
+    <input id="bizName" placeholder="e.g. U2ber Club Studio">
+    <div class="gap"></div>
+
+    <label>Your team link</label>
+    <div class="slugline">
+      <span class="pre" id="origin">/</span>
+      <input id="slug" placeholder="u2berclub" autocapitalize="none" autocomplete="off">
+    </div>
+    <div class="hint muted" id="slugHint">This is the link your staff will open every day.</div>
+    <div class="gap"></div>
+
+    <label>Your name (you'll be the admin)</label>
+    <input id="ownerName" placeholder="e.g. Atul">
+    <div class="gap"></div>
+
+    <label>Choose your PIN</label>
+    <input id="pin" type="password" inputmode="numeric" placeholder="4+ digits">
+    <div class="gap"></div>
+
+    <label>Email (so we can reach you)</label>
+    <input id="email" type="email" placeholder="you@company.com">
+
+    <button class="btn" id="go">Create workspace</button>
+    <div class="err" id="err"></div>
+  </div>
+
+  <!-- SUCCESS -->
+  <div class="card hidden done" id="doneCard">
+    <div class="big">🎉</div>
+    <h1 id="doneTitle">You're all set</h1>
+    <p class="sub" id="doneMsg" style="margin:8px 0 0"></p>
+    <div id="urls">
+      <div style="text-align:left;margin-top:18px">
+        <label>Send this to your team</label>
+        <div class="urlbox" id="staffUrl"></div>
+        <label>Your admin dashboard</label>
+        <div class="urlbox" id="adminUrl"></div>
       </div>
-      <div style="white-space:nowrap">
-        <a href="/admin.html" id="adminLink" class="hidden">Dashboard</a>
-        <a href="#" id="logout">Sign out</a>
-      </div>
+      <button class="btn" id="openAdmin">Open my dashboard</button>
     </div>
+  </div>
 
-    <!-- START -->
-    <div class="card" id="startCard">
-      <label>What are you going to do?</label>
-      <textarea id="task" rows="2" placeholder="e.g. Finish the Sharma quotation"></textarea>
-      <div style="height:16px"></div>
-      <label>For how long?</label>
-      <div class="chips" id="chips">
-        <div class="chip" data-m="15">15m</div>
-        <div class="chip on" data-m="30">30m</div>
-        <div class="chip" data-m="45">45m</div>
-        <div class="chip" data-m="60">60m</div>
-      </div>
-      <button class="btn" id="startBtn">Start</button>
-      <div class="err" id="startErr"></div>
-    </div>
-
-    <!-- RUNNING -->
-    <div class="card hidden" id="runCard">
-      <p class="task-now" id="taskNow"></p>
-      <svg class="ring" width="180" height="180" viewBox="0 0 180 180">
-        <circle cx="90" cy="90" r="80" fill="none" stroke="#262a34" stroke-width="10"/>
-        <circle id="prog" cx="90" cy="90" r="80" fill="none" stroke="#4f9cf9" stroke-width="10"
-                stroke-linecap="round" transform="rotate(-90 90 90)"
-                stroke-dasharray="502.65" stroke-dashoffset="0"/>
-        <text id="ringTxt" x="90" y="90" text-anchor="middle" dominant-baseline="central"
-              fill="#e9ecf1" font-size="34" font-weight="700"
-              font-family="-apple-system,Segoe UI,Roboto,sans-serif"
-              style="font-variant-numeric:tabular-nums">30:00</text>
-      </svg>
-      <p class="task-now" id="distLine" style="margin-top:10px">No distractions yet</p>
-      <button class="btn warn" id="distBtn">I got distracted</button>
-      <div class="row">
-        <button class="btn good" id="doneBtn">Done early</button>
-        <button class="btn bad" id="stopBtn">Give up</button>
-      </div>
-    </div>
-
-    <!-- FINISHED -->
-    <div class="card hidden" id="doneCard" style="text-align:center">
-      <div style="font-size:44px">🎉</div>
-      <h1 id="doneTitle" style="margin:8px 0">Session complete</h1>
-      <p class="sub" id="doneSub" style="margin-bottom:0"></p>
-      <button class="btn" id="againBtn">Start another</button>
-    </div>
-
-    <div class="card">
-      <label style="margin-bottom:14px">Today</label>
-      <div class="stats" id="todayStats">
-        <div><b>0</b><span>sessions</span></div>
-        <div><b>0</b><span>completed</span></div>
-        <div><b>0</b><span>focus min</span></div>
-        <div><b>0</b><span>distractions</span></div>
-      </div>
-    </div>
-
-    <div class="card" id="recentCard">
-      <label style="margin-bottom:6px">Recent sessions</label>
-      <div class="list" id="recent"></div>
-    </div>
-  </section>
-</div>
-
-<!-- DISTRACTION MODAL -->
-<div class="modal hidden" id="distModal">
-  <div class="card">
-    <label>What distracted you? (timer keeps running)</label>
-    <input id="distInput" placeholder="e.g. WhatsApp notification">
-    <div class="quick" id="quickReasons"></div>
-    <div class="row">
-      <button class="btn ghost" id="distCancel">Cancel</button>
-      <button class="btn warn" id="distSave">Log it</button>
-    </div>
+  <div class="foot">
+    <span class="muted">Already have a workspace? Open your team link, or</span>
+    <a href="/master">master admin</a>
   </div>
 </div>
 
-<audio id="ding" preload="auto"
-  src="data:audio/wav;base64,UklGRloDAABXQVZFZm10IBAAAAABAAEAgD4AAAB9AAACABAAZGF0YTYDAAAAAP//"></audio>
-
 <script>
 const $ = (s) => document.querySelector(s);
-const api = async (path, opts = {}) => {
-  const r = await fetch(path, {
-    ...opts,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: 'Bearer ' + token } : {}),
-      ...(opts.headers || {}),
-    },
-  });
-  const data = await r.json().catch(() => ({}));
-  if (r.status === 401) { signOut(); throw new Error(data.error || 'Session expired'); }
-  if (!r.ok) throw new Error(data.error || 'Something went wrong');
-  return data;
+const api = async (p, o = {}) => {
+  const r = await fetch(p, { headers: { 'Content-Type': 'application/json' }, ...o });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.error || 'Something went wrong');
+  return d;
 };
 
-let token = localStorage.getItem('ft_token') || '';
-let me = null, session = null, planned = 30, tick = null, skew = 0, distractions = 0;
+$('#origin').textContent = location.origin.replace(/^https?:\/\//, '') + '/';
 
-const QUICK = ['Phone / WhatsApp', 'Someone called me', 'Email / Slack', 'Tea / break',
-               'Feeling tired', 'Waiting on someone', 'Social media', 'Personal work'];
+// Suggest a link from the business name, until the user edits it themselves.
+let slugTouched = false;
+$('#slug').addEventListener('input', () => { slugTouched = true; checkSlug(); });
+$('#bizName').addEventListener('input', () => {
+  if (slugTouched) return;
+  $('#slug').value = slugify($('#bizName').value);
+  checkSlug();
+});
+$('#code').addEventListener('input', (e) => {
+  e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9-]/g, '');
+});
 
-// ---------- auth ----------
-function signOut() {
-  localStorage.removeItem('ft_token');
-  token = ''; me = null; session = null;
-  clearInterval(tick);
-  $('#appView').classList.add('hidden');
-  $('#loginView').classList.remove('hidden');
+const slugify = (s) => String(s).toLowerCase().trim()
+  .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 32);
+
+let checkTimer;
+function checkSlug() {
+  clearTimeout(checkTimer);
+  const v = slugify($('#slug').value);
+  if (!v) { setHint('This is the link your staff will open every day.', 'muted'); return; }
+  checkTimer = setTimeout(async () => {
+    try {
+      const d = await api('/api/slug-available/' + encodeURIComponent(v));
+      setHint(d.available ? `${v} is available` : d.reason, d.available ? 'ok' : 'bad');
+    } catch { /* ignore */ }
+  }, 300);
+}
+function setHint(text, kind) {
+  const el = $('#slugHint');
+  el.textContent = text;
+  el.style.color = kind === 'ok' ? 'var(--good)' : kind === 'bad' ? 'var(--bad)' : 'var(--dim)';
 }
 
-$('#loginBtn').onclick = async () => {
-  $('#loginErr').textContent = '';
+$('#go').onclick = async () => {
+  $('#err').textContent = '';
+  $('#go').disabled = true;
   try {
-    const d = await api('/api/login', {
+    const d = await api('/api/signup', {
       method: 'POST',
-      body: JSON.stringify({ name: $('#lName').value, pin: $('#lPin').value }),
+      body: JSON.stringify({
+        code: $('#code').value,
+        business_name: $('#bizName').value,
+        slug: slugify($('#slug').value),
+        owner_name: $('#ownerName').value,
+        owner_pin: $('#pin').value,
+        contact_email: $('#email').value,
+      }),
     });
-    token = d.token;
-    localStorage.setItem('ft_token', token);
-    me = d.user;
-    boot();
-  } catch (e) { $('#loginErr').textContent = e.message; }
-};
-$('#lPin').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#loginBtn').click(); });
-$('#logout').onclick = async (e) => {
-  e.preventDefault();
-  try { await api('/api/logout', { method: 'POST' }); } catch {}
-  signOut();
-};
-
-// ---------- start ----------
-$('#chips').onclick = (e) => {
-  const c = e.target.closest('.chip');
-  if (!c) return;
-  document.querySelectorAll('.chip').forEach((x) => x.classList.remove('on'));
-  c.classList.add('on');
-  planned = Number(c.dataset.m);
-};
-
-$('#startBtn').onclick = async () => {
-  $('#startErr').textContent = '';
-  try {
-    const d = await api('/api/sessions/start', {
-      method: 'POST',
-      body: JSON.stringify({ task: $('#task').value, planned_minutes: planned }),
-    });
-    skew = Date.now() - new Date(d.serverTime).getTime();
-    session = d.session; distractions = 0;
-    showRunning();
-  } catch (e) { $('#startErr').textContent = e.message; }
-};
-
-// ---------- running ----------
-function showRunning() {
-  $('#startCard').classList.add('hidden');
-  $('#doneCard').classList.add('hidden');
-  $('#recentCard').classList.add('hidden');
-  $('#runCard').classList.remove('hidden');
-  $('#taskNow').textContent = session.task;
-  updateDistLine();
-  clearInterval(tick);
-  tick = setInterval(render, 250);
-  render();
-}
-
-function remaining() {
-  const total = session.planned_minutes * 60;
-  const elapsed = (Date.now() - skew - new Date(session.started_at).getTime()) / 1000;
-  return Math.max(0, Math.round(total - elapsed));
-}
-
-function render() {
-  const left = remaining();
-  const total = session.planned_minutes * 60;
-  const m = String(Math.floor(left / 60)).padStart(2, '0');
-  const s = String(left % 60).padStart(2, '0');
-  $('#ringTxt').textContent = `${m}:${s}`;
-  document.title = `${m}:${s} · FocusTrack`;
-  const C = 2 * Math.PI * 80;
-  $('#prog').setAttribute('stroke-dashoffset', String(C * (1 - left / total)));
-  $('#prog').setAttribute('stroke', left / total < 0.15 ? '#3ecf8e' : '#4f9cf9');
-  if (left <= 0) finish('complete', true);
-}
-
-function updateDistLine() {
-  $('#distLine').textContent = distractions === 0
-    ? 'No distractions yet — keep going'
-    : `${distractions} distraction${distractions > 1 ? 's' : ''} logged`;
-}
-
-$('#distBtn').onclick = () => {
-  $('#distInput').value = '';
-  $('#distModal').classList.remove('hidden');
-  $('#distInput').focus();
-};
-$('#distCancel').onclick = () => $('#distModal').classList.add('hidden');
-$('#distInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#distSave').click(); });
-
-$('#quickReasons').innerHTML = QUICK.map((q) => `<button>${q}</button>`).join('');
-$('#quickReasons').onclick = (e) => {
-  if (e.target.tagName === 'BUTTON') { $('#distInput').value = e.target.textContent; $('#distSave').click(); }
-};
-
-$('#distSave').onclick = async () => {
-  const reason = $('#distInput').value.trim();
-  if (!reason) return;
-  try {
-    const d = await api(`/api/sessions/${session.id}/distraction`, {
-      method: 'POST', body: JSON.stringify({ reason }),
-    });
-    distractions = d.count;
-    updateDistLine();
-    $('#distModal').classList.add('hidden');
-  } catch (e) { alert(e.message); }
-};
-
-$('#doneBtn').onclick = () => finish('complete', false);
-$('#stopBtn').onclick = () => {
-  if (confirm('Give up this session? It will be recorded as not completed.')) finish('stop', false);
-};
-
-async function finish(kind, auto) {
-  clearInterval(tick);
-  const id = session.id;
-  const mins = Math.round((session.planned_minutes * 60 - remaining()) / 60);
-  try { await api(`/api/sessions/${id}/${kind === 'complete' ? 'complete' : 'stop'}`, { method: 'POST' }); }
-  catch (e) { /* already ended */ }
-  document.title = 'FocusTrack';
-  session = null;
-  $('#runCard').classList.add('hidden');
-  $('#doneCard').classList.remove('hidden');
-  $('#recentCard').classList.remove('hidden');
-  $('#doneTitle').textContent = kind === 'complete'
-    ? (auto ? 'Time’s up!' : 'Marked done') : 'Session stopped';
-  $('#doneSub').textContent =
-    `${mins} min focused · ${distractions} distraction${distractions === 1 ? '' : 's'}`;
-  if (kind === 'complete') { try { $('#ding').play(); } catch {} }
-  loadToday();
-}
-
-$('#againBtn').onclick = () => {
-  $('#doneCard').classList.add('hidden');
-  $('#startCard').classList.remove('hidden');
-  $('#task').value = '';
-  $('#task').focus();
-};
-
-// ---------- today ----------
-async function loadToday() {
-  try {
-    const d = await api('/api/my/today');
-    const t = d.today;
-    $('#todayStats').innerHTML = `
-      <div><b>${t.sessions}</b><span>sessions</span></div>
-      <div><b>${t.completed}</b><span>completed</span></div>
-      <div><b>${t.focusedMinutes}</b><span>focus min</span></div>
-      <div><b>${t.distractions}</b><span>distractions</span></div>`;
-    $('#recent').innerHTML = d.recent.length
-      ? d.recent.map((r) => {
-          const color = r.status === 'completed' ? 'var(--good)' : 'var(--bad)';
-          const when = new Date(r.started_at).toLocaleString([], { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
-          return `<div class="item">
-            <span><i class="dot" style="background:${color}"></i>${escapeHtml(r.task)}</span>
-            <span style="color:var(--dim);white-space:nowrap">${when} · ${r.distractions}⚡</span>
-          </div>`;
-        }).join('')
-      : '<div style="color:var(--dim);padding:8px 0">Nothing yet today.</div>';
-  } catch {}
-}
-
-const escapeHtml = (s) => String(s).replace(/[&<>"]/g, (c) =>
-  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-
-// ---------- boot ----------
-async function boot() {
-  $('#loginView').classList.add('hidden');
-  $('#appView').classList.remove('hidden');
-  if (!me) me = (await api('/api/me')).user;
-  $('#hello').textContent = `Hi ${me.name.split(' ')[0]}`;
-  $('#dateLine').textContent = new Date().toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long' });
-  if (me.role === 'admin') $('#adminLink').classList.remove('hidden');
-
-  const a = await api('/api/sessions/active');
-  if (a.session) {
-    skew = Date.now() - new Date(a.serverTime).getTime();
-    session = a.session;
-    distractions = a.distractions.length;
-    showRunning();
+    $('#signupCard').classList.add('hidden');
+    $('#doneCard').classList.remove('hidden');
+    $('#doneMsg').textContent = d.message;
+    if (d.status === 'active') {
+      $('#staffUrl').textContent = location.origin + d.loginUrl;
+      $('#adminUrl').textContent = location.origin + d.adminUrl;
+      $('#openAdmin').onclick = () => { location.href = d.adminUrl; };
+    } else {
+      $('#doneTitle').textContent = 'Request received';
+      $('#urls').classList.add('hidden');
+    }
+    window.scrollTo(0, 0);
+  } catch (e) {
+    $('#err').textContent = e.message;
+  } finally {
+    $('#go').disabled = false;
   }
-  loadToday();
-}
+};
 
-if (token) boot().catch(() => signOut());
+$('#pin').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#go').click(); });
 </script>
 </body>
 </html>

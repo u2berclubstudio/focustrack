@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FocusTrack · Master Admin</title>
+<link rel="stylesheet" href="/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛡️</text></svg>">
+<style>
+  body{padding:24px 18px 60px}
+  .wrap{max-width:1180px;margin:0 auto}
+  .loginwrap{max-width:400px;margin:70px auto}
+  .top{display:flex;flex-wrap:wrap;gap:12px;justify-content:space-between;align-items:center;margin-bottom:18px}
+  .controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .controls input,.controls select{width:auto;padding:9px 11px;font-size:14px}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px;margin-bottom:16px}
+  .kpi b{display:block;font-size:28px;letter-spacing:-1px;line-height:1.2}
+  .kpi span{font-size:12px;color:var(--dim)}
+  .live{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:7px;vertical-align:middle}
+  .live.on{background:var(--good);box-shadow:0 0 0 3px rgba(62,207,142,.18)}
+  .live.off{background:#3a4150}
+  .seatcell{display:flex;align-items:center;gap:6px}
+  .seatcell input{width:62px;padding:6px 8px;font-size:13px}
+  .actions{display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap}
+  .codebox{
+    display:flex;align-items:center;justify-content:space-between;gap:10px;
+    background:#0f1218;border:1px solid var(--line);border-radius:12px;padding:14px;margin-top:12px
+  }
+  .codebox b{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:22px;letter-spacing:2px}
+  .tabs{display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap}
+  .tab{background:transparent;border:1px solid var(--line);color:var(--dim);
+       border-radius:9px;padding:9px 15px;font-size:14px;font-weight:600}
+  .tab.on{background:var(--accent);border-color:var(--accent);color:#04101f}
+  .newcode{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .newcode input{width:auto;padding:10px 12px;font-size:14px}
+  .small{font-size:12px;color:var(--dim)}
+</style>
+</head>
+<body>
+
+<!-- LOGIN -->
+<div class="loginwrap" id="loginView">
+  <h1>Master Admin</h1>
+  <p class="sub">Platform control panel</p>
+  <div class="card">
+    <label>Name</label>
+    <input id="lName" autocomplete="username">
+    <div class="gap"></div>
+    <label>PIN</label>
+    <input id="lPin" type="password" inputmode="numeric" autocomplete="current-password">
+    <button class="btn" id="loginBtn">Sign in</button>
+    <div class="err" id="loginErr"></div>
+  </div>
+</div>
+
+<!-- PANEL -->
+<div class="wrap hidden" id="panel">
+  <div class="top">
+    <div>
+      <h1>Master Admin</h1>
+      <div class="small" id="who"></div>
+    </div>
+    <div class="controls">
+      <button class="btn sm" id="refresh">Refresh</button>
+      <a class="linkbtn" href="/">Public signup page</a>
+      <a class="linkbtn" href="#" id="signout">Sign out</a>
+    </div>
+  </div>
+
+  <div class="kpis" id="kpis"></div>
+
+  <div class="tabs">
+    <button class="tab on" data-tab="biz">Businesses</button>
+    <button class="tab" data-tab="codes">Invite codes</button>
+    <button class="tab" data-tab="audit">Activity log</button>
+  </div>
+
+  <!-- BUSINESSES -->
+  <div id="tab-biz">
+    <div class="card">
+      <h2>ALL BUSINESSES</h2>
+      <table id="bizTable">
+        <thead><tr>
+          <th>Business</th><th>Status</th><th>Owner</th><th>Seats</th>
+          <th>Live</th><th>24h</th><th>7d</th><th>Last session</th><th></th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+      <div class="empty hidden" id="bizEmpty">No businesses yet. Generate an invite code to get started.</div>
+    </div>
+  </div>
+
+  <!-- CODES -->
+  <div id="tab-codes" class="hidden">
+    <div class="card">
+      <h2>GENERATE AN INVITE CODE</h2>
+      <div class="newcode">
+        <input id="cNote" placeholder="Who is this for? (e.g. Sharma Events)">
+        <input id="cSeats" type="number" value="10" min="1" max="1000" title="Seat limit">
+        <label style="margin:0;display:flex;align-items:center;gap:7px;font-size:13px">
+          <input type="checkbox" id="cAuto" checked style="width:auto">
+          Activate instantly
+        </label>
+        <button class="btn sm" id="genCode">Generate</button>
+      </div>
+      <div class="small" style="margin-top:10px">
+        Each code works exactly once. Leave "Activate instantly" ticked when you have already
+        vetted the business — untick it if you want to approve them yourself after they sign up.
+      </div>
+      <div class="codebox hidden" id="freshCode">
+        <b id="freshCodeVal"></b>
+        <button class="btn sm" id="copyCode">Copy</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>ALL CODES</h2>
+      <table id="codeTable">
+        <thead><tr><th>Code</th><th>For</th><th>Seats</th><th>Mode</th><th>Used by</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <div class="empty hidden" id="codeEmpty">No codes yet.</div>
+    </div>
+  </div>
+
+  <!-- AUDIT -->
+  <div id="tab-audit" class="hidden">
+    <div class="card">
+      <h2>ACTIVITY LOG</h2>
+      <table id="auditTable">
+        <thead><tr><th>When</th><th>Who</th><th>Action</th><th>Detail</th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <div class="empty hidden" id="auditEmpty">Nothing logged yet.</div>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const KEY = 'ft_master_token';
+let token = localStorage.getItem(KEY) || '';
+
+const api = async (p, o = {}) => {
+  const r = await fetch(p, {
+    ...o,
+    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}), ...(o.headers || {}) },
+  });
+  const d = await r.json().catch(() => ({}));
+  if (r.status === 401) { signOut(); throw new Error('Session expired'); }
+  if (!r.ok) throw new Error(d.error || 'Error');
+  return d;
+};
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const ago = (iso) => {
+  if (!iso) return '—';
+  const mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return mins + 'm ago';
+  const h = Math.round(mins / 60);
+  if (h < 48) return h + 'h ago';
+  return Math.round(h / 24) + 'd ago';
+};
+const statusPill = (s) =>
+  s === 'active' ? '<span class="pill good">active</span>'
+  : s === 'pending' ? '<span class="pill warn">pending</span>'
+  : '<span class="pill bad">suspended</span>';
+
+// ---------- auth ----------
+function signOut() {
+  localStorage.removeItem(KEY);
+  token = '';
+  $('#panel').classList.add('hidden');
+  $('#loginView').classList.remove('hidden');
+}
+$('#signout').onclick = async (e) => {
+  e.preventDefault();
+  try { await api('/api/logout', { method: 'POST' }); } catch {}
+  signOut();
+};
+$('#loginBtn').onclick = async () => {
+  $('#loginErr').textContent = '';
+  try {
+    const r = await fetch('/api/master/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: $('#lName').value, pin: $('#lPin').value }),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || 'Login failed');
+    token = d.token;
+    localStorage.setItem(KEY, token);
+    $('#who').textContent = 'Signed in as ' + d.user.name;
+    boot();
+  } catch (e) { $('#loginErr').textContent = e.message; }
+};
+$('#lPin').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#loginBtn').click(); });
+
+// ---------- tabs ----------
+document.querySelector('.tabs').onclick = (e) => {
+  const t = e.target.closest('.tab');
+  if (!t) return;
+  document.querySelectorAll('.tab').forEach((x) => x.classList.toggle('on', x === t));
+  for (const name of ['biz', 'codes', 'audit']) {
+    $('#tab-' + name).classList.toggle('hidden', name !== t.dataset.tab);
+  }
+  if (t.dataset.tab === 'codes') loadCodes();
+  if (t.dataset.tab === 'audit') loadAudit();
+};
+
+// ---------- businesses ----------
+async function loadOverview() {
+  const d = await api('/api/master/overview');
+  const t = d.totals;
+  $('#kpis').innerHTML = [
+    ['Businesses', t.businesses, 'var(--txt)'],
+    ['Active', t.active, 'var(--good)'],
+    ['Pending', t.pending, t.pending ? 'var(--warn)' : 'var(--txt)'],
+    ['Suspended', t.suspended, t.suspended ? 'var(--bad)' : 'var(--txt)'],
+    ['Live today', t.liveToday, 'var(--txt)'],
+    ['Total seats', t.seats, 'var(--txt)'],
+    ['Sessions 24h', t.sessions24h, 'var(--txt)'],
+  ].map(([l, v, c]) => `<div class="card kpi" style="margin:0"><b style="color:${c}">${v}</b><span>${l}</span></div>`).join('');
+
+  $('#bizEmpty').classList.toggle('hidden', d.businesses.length > 0);
+  $('#bizTable').querySelector('tbody').innerHTML = d.businesses.map((b) => `
+    <tr>
+      <td>
+        <div>${esc(b.name)}</div>
+        <div class="small"><a href="/${esc(b.slug)}" target="_blank" style="color:var(--accent)">/${esc(b.slug)}</a>
+          ${b.contact_email ? ' · ' + esc(b.contact_email) : ''}</div>
+      </td>
+      <td>${statusPill(b.status)}</td>
+      <td class="muted">${esc(b.owner)}</td>
+      <td>
+        <div class="seatcell">
+          <span>${b.seats}/</span>
+          <input type="number" min="1" max="1000" value="${b.seatLimit}" data-seats="${b.id}">
+        </div>
+      </td>
+      <td><span class="live ${b.live ? 'on' : 'off'}"></span><span class="small">${b.live ? 'yes' : 'no'}</span></td>
+      <td>${b.sessions24h}</td>
+      <td>${b.sessions7d} <span class="small">(${b.activeUsers7d} ppl)</span></td>
+      <td class="muted small">${ago(b.lastSessionAt)}</td>
+      <td>
+        <div class="actions">
+          ${b.status !== 'active' ? `<button class="btn good sm" data-status="active" data-id="${b.id}">Approve</button>` : ''}
+          ${b.status === 'active' ? `<button class="btn ghost sm" data-view="${b.id}">View as</button>` : ''}
+          ${b.status !== 'suspended' ? `<button class="btn bad sm" data-status="suspended" data-id="${b.id}">Suspend</button>` : ''}
+        </div>
+      </td>
+    </tr>`).join('');
+}
+
+$('#bizTable').onclick = async (e) => {
+  const id = e.target.dataset.id, status = e.target.dataset.status, view = e.target.dataset.view;
+  try {
+    if (status) {
+      const verb = status === 'active' ? 'approve' : 'suspend';
+      if (status === 'suspended' && !confirm('Suspend this business? Everyone will be signed out immediately.')) return;
+      await api(`/api/master/businesses/${id}/status`, { method: 'POST', body: JSON.stringify({ status }) });
+      loadOverview();
+    }
+    if (view) {
+      if (!confirm('Open this workspace as its owner? This visit is written to the activity log.')) return;
+      const d = await api(`/api/master/businesses/${view}/impersonate`, { method: 'POST' });
+      localStorage.setItem('ft_token_' + d.slug, d.token);
+      window.open(d.adminUrl, '_blank');
+    }
+  } catch (err) { alert(err.message); }
+};
+
+$('#bizTable').onchange = async (e) => {
+  const id = e.target.dataset.seats;
+  if (!id) return;
+  try {
+    await api(`/api/master/businesses/${id}`, {
+      method: 'PATCH', body: JSON.stringify({ seat_limit: Number(e.target.value) }),
+    });
+    loadOverview();
+  } catch (err) { alert(err.message); }
+};
+
+// ---------- codes ----------
+async function loadCodes() {
+  const { codes } = await api('/api/master/codes');
+  $('#codeEmpty').classList.toggle('hidden', codes.length > 0);
+  $('#codeTable').querySelector('tbody').innerHTML = codes.map((c) => `
+    <tr>
+      <td><code class="mono">${esc(c.code)}</code></td>
+      <td class="muted">${esc(c.note) || '—'}</td>
+      <td>${c.seat_limit}</td>
+      <td class="small muted">${c.auto_approve ? 'instant' : 'needs approval'}</td>
+      <td>${c.used_by
+            ? `<a href="/${esc(c.business_slug)}" target="_blank" style="color:var(--accent)">${esc(c.business_name)}</a>`
+            : '<span class="pill">unused</span>'}</td>
+      <td style="text-align:right">
+        ${c.used_by ? '' : `<button class="btn ghost sm" data-copy="${esc(c.code)}">Copy</button>
+                            <button class="btn ghost sm" data-del="${esc(c.code)}">Delete</button>`}
+      </td>
+    </tr>`).join('');
+}
+
+$('#codeTable').onclick = async (e) => {
+  const copy = e.target.dataset.copy, del = e.target.dataset.del;
+  if (copy) { await navigator.clipboard.writeText(copy); e.target.textContent = 'Copied'; setTimeout(() => e.target.textContent = 'Copy', 1200); }
+  if (del) {
+    if (!confirm('Delete this unused code?')) return;
+    try { await api('/api/master/codes/' + del, { method: 'DELETE' }); loadCodes(); }
+    catch (err) { alert(err.message); }
+  }
+};
+
+$('#genCode').onclick = async () => {
+  try {
+    const d = await api('/api/master/codes', {
+      method: 'POST',
+      body: JSON.stringify({
+        note: $('#cNote').value,
+        seat_limit: Number($('#cSeats').value || 10),
+        auto_approve: $('#cAuto').checked,
+      }),
+    });
+    $('#freshCode').classList.remove('hidden');
+    $('#freshCodeVal').textContent = d.code;
+    $('#copyCode').onclick = async () => {
+      await navigator.clipboard.writeText(d.code);
+      $('#copyCode').textContent = 'Copied';
+      setTimeout(() => $('#copyCode').textContent = 'Copy', 1200);
+    };
+    $('#cNote').value = '';
+    loadCodes();
+  } catch (e) { alert(e.message); }
+};
+
+// ---------- audit ----------
+async function loadAudit() {
+  const { entries } = await api('/api/master/audit');
+  $('#auditEmpty').classList.toggle('hidden', entries.length > 0);
+  $('#auditTable').querySelector('tbody').innerHTML = entries.map((a) => `
+    <tr>
+      <td class="muted small" style="white-space:nowrap">${new Date(a.at).toLocaleString()}</td>
+      <td>${esc(a.actor)}</td>
+      <td><span class="pill${a.action === 'impersonate' ? ' warn' : ''}">${esc(a.action)}</span></td>
+      <td class="muted">${esc(a.detail)}</td>
+    </tr>`).join('');
+}
+
+$('#refresh').onclick = () => loadOverview();
+
+async function boot() {
+  $('#loginView').classList.add('hidden');
+  $('#panel').classList.remove('hidden');
+  const me = await api('/api/me');
+  if (me.user.role !== 'master') { signOut(); return; }
+  $('#who').textContent = 'Signed in as ' + me.user.name;
+  loadOverview();
+}
+
+if (token) boot().catch(() => signOut());
+</script>
+</body>
+</html>

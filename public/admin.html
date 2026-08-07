@@ -3,44 +3,23 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>FocusTrack · Admin</title>
+<title>FocusTrack · Dashboard</title>
+<link rel="stylesheet" href="/style.css">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📊</text></svg>">
 <style>
-  :root{
-    --bg:#0f1115; --card:#171a21; --line:#262a34; --txt:#e9ecf1; --dim:#98a0b0;
-    --accent:#4f9cf9; --good:#3ecf8e; --warn:#f5a524; --bad:#f45b69;
-  }
-  *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--txt);
-    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,sans-serif;padding:24px 18px 60px}
+  body{padding:24px 18px 60px}
   .wrap{max-width:1120px;margin:0 auto}
-  h1{font-size:22px;margin:0}
-  h2{font-size:14px;color:var(--dim);margin:0 0 16px;font-weight:600;letter-spacing:.02em}
-  .top{display:flex;flex-wrap:wrap;gap:12px;justify-content:space-between;align-items:center;margin-bottom:20px}
+  .top{display:flex;flex-wrap:wrap;gap:12px;justify-content:space-between;align-items:center;margin-bottom:18px}
   .controls{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
-  select,input[type=date],input[type=text],input[type=password]{
-    background:#0f1218;border:1px solid var(--line);color:var(--txt);border-radius:9px;
-    padding:9px 11px;font-size:14px;font-family:inherit;outline:none}
-  button{background:var(--accent);color:#04101f;border:none;border-radius:9px;padding:10px 15px;
-    font-size:14px;font-weight:600;cursor:pointer;font-family:inherit}
-  button.ghost{background:transparent;border:1px solid var(--line);color:var(--dim)}
-  a.ghost{background:transparent;border:1px solid var(--line);color:var(--dim);border-radius:9px;
-    padding:10px 15px;font-size:14px;text-decoration:none;display:inline-block}
+  .controls select,.controls input{width:auto;padding:9px 11px;font-size:14px}
   .grid{display:grid;gap:14px}
   .kpis{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
   .cols{grid-template-columns:1.35fr 1fr;align-items:start}
   @media(max-width:860px){.cols{grid-template-columns:1fr}}
-  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px}
   .kpi b{display:block;font-size:30px;letter-spacing:-1px;line-height:1.15}
   .kpi span{font-size:12px;color:var(--dim)}
-  table{width:100%;border-collapse:collapse;font-size:14px}
-  th{text-align:left;color:var(--dim);font-weight:600;font-size:12px;padding:0 8px 10px;
-     border-bottom:1px solid var(--line);white-space:nowrap}
-  td{padding:11px 8px;border-bottom:1px solid var(--line)}
-  tr:last-child td{border-bottom:none}
-  .score{display:inline-block;min-width:44px;text-align:center;border-radius:7px;padding:4px 8px;
-    font-weight:700;font-size:13px}
-  .bar{height:9px;border-radius:5px;background:var(--accent);min-width:3px}
+  .score{display:inline-block;min-width:44px;text-align:center;border-radius:7px;padding:4px 8px;font-weight:700;font-size:13px}
+  .bar{height:9px;border-radius:5px;background:var(--accent);min-width:3px;display:block}
   .barrow{display:flex;align-items:center;gap:10px;padding:7px 0;font-size:13px}
   .barrow .lbl{width:44%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dim)}
   .barrow .val{width:36px;text-align:right;color:var(--dim);font-size:12px}
@@ -49,22 +28,23 @@
   .hbars .h{flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:5px}
   .hbars .h i{width:100%;background:var(--accent);border-radius:4px 4px 0 0;display:block;min-height:2px}
   .hbars .h small{font-size:10px;color:var(--dim)}
-  .feed .f{padding:9px 0;border-bottom:1px solid var(--line);font-size:13px;display:flex;
-    justify-content:space-between;gap:10px}
+  .feed .f{padding:9px 0;border-bottom:1px solid var(--line);font-size:13px;display:flex;justify-content:space-between;gap:10px}
   .feed .f:last-child{border-bottom:none}
-  .muted{color:var(--dim)}
-  .empty{color:var(--dim);font-size:13px;padding:14px 0;text-align:center}
-  .pill{font-size:11px;border:1px solid var(--line);border-radius:20px;padding:2px 9px;color:var(--dim)}
-  .userrow{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
-  .err{color:var(--bad);font-size:13px;min-height:16px}
-  .hidden{display:none !important}
+  .userrow{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px}
+  .userrow input,.userrow select{width:auto;padding:10px 12px;font-size:14px}
+  .seats{font-size:12px;color:var(--dim);margin-left:auto}
 </style>
 </head>
 <body>
 <div class="wrap">
+  <div id="impersonating" class="banner hidden">
+    <span>You are viewing this workspace as the master admin. This visit is recorded.</span>
+    <a class="linkbtn" href="/master">Back to master</a>
+  </div>
+
   <div class="top">
     <div>
-      <h1>Team Focus Dashboard</h1>
+      <h1 id="bizName">Dashboard</h1>
       <div class="muted" style="font-size:13px" id="rangeLabel"></div>
     </div>
     <div class="controls">
@@ -77,15 +57,16 @@
       <input type="date" id="from" class="hidden">
       <input type="date" id="to" class="hidden">
       <select id="userFilter"><option value="">All employees</option></select>
-      <button id="refresh">Refresh</button>
-      <a class="ghost" id="csv" href="#">Export CSV</a>
-      <a class="ghost" href="/">My timer</a>
+      <button class="btn sm" id="refresh">Refresh</button>
+      <a class="linkbtn" id="csv" href="#">Export CSV</a>
+      <a class="linkbtn" id="timerLink" href="#">My timer</a>
+      <a class="linkbtn" href="#" id="signout">Sign out</a>
     </div>
   </div>
 
   <div class="grid kpis" id="kpis"></div>
 
-  <div style="height:14px"></div>
+  <div class="gap"></div>
   <div class="grid cols">
     <div class="card">
       <h2>EMPLOYEES</h2>
@@ -108,7 +89,7 @@
     </div>
   </div>
 
-  <div style="height:14px"></div>
+  <div class="gap"></div>
   <div class="cols3">
     <div class="card">
       <h2>BEST HOURS OF THE DAY</h2>
@@ -126,39 +107,51 @@
     </div>
   </div>
 
-  <div style="height:14px"></div>
+  <div class="gap"></div>
   <div class="card">
-    <h2>MANAGE EMPLOYEES</h2>
+    <h2>YOUR TEAM</h2>
     <div class="userrow">
       <input type="text" id="nName" placeholder="Name">
       <input type="password" id="nPin" placeholder="PIN (4+ digits)">
       <input type="text" id="nTeam" placeholder="Team (optional)">
       <select id="nRole"><option value="employee">Employee</option><option value="admin">Admin</option></select>
-      <button id="addUser">Add</button>
-      <span class="err" id="userErr"></span>
+      <button class="btn sm" id="addUser">Add</button>
+      <span class="err" id="userErr" style="margin:0"></span>
+      <span class="seats" id="seats"></span>
     </div>
     <table id="userTable">
       <thead><tr><th>Name</th><th>Role</th><th>Team</th><th>Status</th><th></th></tr></thead>
       <tbody></tbody>
     </table>
+    <div class="muted" style="font-size:12px;margin-top:14px" id="staffLink"></div>
   </div>
 </div>
 
 <script>
 const $ = (s) => document.querySelector(s);
-const token = localStorage.getItem('ft_token');
-if (!token) location.href = '/';
+const SLUG = location.pathname.split('/').filter(Boolean)[0] || '';
+const KEY = 'ft_token_' + SLUG;
+const token = localStorage.getItem(KEY);
+if (!token) location.href = '/' + SLUG;
 
 const api = async (p, o = {}) => {
   const r = await fetch(p, { ...o, headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token, ...(o.headers || {}) } });
   const d = await r.json().catch(() => ({}));
-  if (r.status === 401) { localStorage.removeItem('ft_token'); location.href = '/'; }
+  if (r.status === 401) { localStorage.removeItem(KEY); location.href = '/' + SLUG; }
   if (!r.ok) throw new Error(d.error || 'Error');
   return d;
 };
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const scoreColor = (v) => v >= 80 ? 'var(--good)' : v >= 60 ? 'var(--warn)' : 'var(--bad)';
 const fmtMin = (m) => m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`;
+
+$('#timerLink').href = '/' + SLUG;
+$('#signout').onclick = async (e) => {
+  e.preventDefault();
+  try { await api('/api/logout', { method: 'POST' }); } catch {}
+  localStorage.removeItem(KEY);
+  location.href = '/' + SLUG;
+};
 
 function currentRange() {
   const p = $('#preset').value;
@@ -169,7 +162,6 @@ function currentRange() {
   const n = Number(p);
   return { from: iso(new Date(Date.now() - (n - 1) * 86400000)), to: today };
 }
-
 function qs() {
   const { from, to } = currentRange();
   const u = $('#userFilter').value;
@@ -188,10 +180,9 @@ $('#refresh').onclick = load;
 $('#csv').onclick = async (e) => {
   e.preventDefault();
   const r = await fetch(`/api/admin/export.csv?${qs()}`, { headers: { Authorization: 'Bearer ' + token } });
-  const blob = await r.blob();
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = `focustrack_${currentRange().from}_to_${currentRange().to}.csv`;
+  a.href = URL.createObjectURL(await r.blob());
+  a.download = `${SLUG}_${currentRange().from}_to_${currentRange().to}.csv`;
   a.click();
 };
 
@@ -218,6 +209,8 @@ function colBars(el, items, valueKey, labelFn, color) {
 
 async function load() {
   const d = await api(`/api/admin/stats?${qs()}`);
+  $('#bizName').textContent = d.business.name;
+  document.title = d.business.name + ' · FocusTrack';
   $('#rangeLabel').textContent = `${d.range.from} → ${d.range.to}`;
   const t = d.totals;
 
@@ -232,9 +225,8 @@ async function load() {
   ].map(([label, val, color]) =>
     `<div class="card kpi"><b style="color:${color}">${val}</b><span>${label}</span></div>`).join('');
 
-  const tb = $('#empTable').querySelector('tbody');
   $('#empEmpty').classList.toggle('hidden', d.employees.length > 0);
-  tb.innerHTML = d.employees.map((e) => `
+  $('#empTable').querySelector('tbody').innerHTML = d.employees.map((e) => `
     <tr>
       <td>${esc(e.name)} ${e.team ? `<span class="pill">${esc(e.team)}</span>` : ''}</td>
       <td><span class="score" style="background:${scoreColor(e.focusScore)}22;color:${scoreColor(e.focusScore)}">${e.focusScore}</span></td>
@@ -254,9 +246,9 @@ async function load() {
     : '';
 
   colBars($('#daily'), d.daily, 'focusedMinutes', (x) => x.date.slice(5), 'var(--good)');
-  const totalDays = d.daily.length || 1;
+  const days = d.daily.length || 1;
   $('#dailyNote').textContent =
-    `Average ${Math.round(d.daily.reduce((a, x) => a + x.focusedMinutes, 0) / totalDays)} focus min/day across the team.`;
+    `Average ${Math.round(d.daily.reduce((a, x) => a + x.focusedMinutes, 0) / days)} focus min/day across the team.`;
 
   $('#feed').innerHTML = d.recentDistractions.length
     ? d.recentDistractions.map((f) => `
@@ -268,24 +260,32 @@ async function load() {
 }
 
 async function loadUsers() {
-  const { users } = await api('/api/admin/users');
+  const { users, seatsUsed, seatLimit } = await api('/api/admin/users');
   const sel = $('#userFilter');
   const cur = sel.value;
   sel.innerHTML = '<option value="">All employees</option>' +
     users.filter((u) => u.active).map((u) => `<option value="${u.id}">${esc(u.name)}</option>`).join('');
   sel.value = cur;
 
+  $('#seats').textContent = `${seatsUsed} of ${seatLimit} seats used`;
+  $('#seats').style.color = seatsUsed >= seatLimit ? 'var(--warn)' : 'var(--dim)';
+  $('#addUser').disabled = seatsUsed >= seatLimit;
+
   $('#userTable').querySelector('tbody').innerHTML = users.map((u) => `
     <tr>
       <td>${esc(u.name)}</td>
       <td class="muted">${u.role}</td>
       <td class="muted">${esc(u.team) || '—'}</td>
-      <td>${u.active ? '<span style="color:var(--good)">active</span>' : '<span class="muted">disabled</span>'}</td>
+      <td>${u.active ? '<span class="pill good">active</span>' : '<span class="pill">disabled</span>'}</td>
       <td style="text-align:right;white-space:nowrap">
-        <button class="ghost" data-pin="${u.id}">Reset PIN</button>
-        <button class="ghost" data-tog="${u.id}" data-active="${u.active}">${u.active ? 'Disable' : 'Enable'}</button>
+        <button class="btn ghost sm" data-pin="${u.id}">Reset PIN</button>
+        ${u.role === 'owner' ? '' :
+          `<button class="btn ghost sm" data-tog="${u.id}" data-active="${u.active}">${u.active ? 'Disable' : 'Enable'}</button>`}
       </td>
     </tr>`).join('');
+
+  $('#staffLink').innerHTML =
+    `Staff sign in at <code class="mono">${location.origin}/${SLUG}</code> using their name and PIN.`;
 }
 
 $('#userTable').onclick = async (e) => {
@@ -323,7 +323,8 @@ $('#addUser').onclick = async () => {
 
 (async () => {
   const me = await api('/api/me');
-  if (me.user.role !== 'admin') { location.href = '/'; return; }
+  if (!['owner', 'admin'].includes(me.user.role)) { location.href = '/' + SLUG; return; }
+  if (me.user.impersonated_by) $('#impersonating').classList.remove('hidden');
   await loadUsers();
   await load();
 })();

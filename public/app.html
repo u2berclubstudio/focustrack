@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>FocusTrack</title>
+<link rel="stylesheet" href="/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⏱️</text></svg>">
+<style>
+  body{display:flex;flex-direction:column;align-items:center;padding:20px 16px 48px}
+  .wrap{width:100%;max-width:460px}
+  .chips{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:8px}
+  .chip{background:#0f1218;border:1px solid var(--line);color:var(--dim);border-radius:12px;
+    padding:12px 0;text-align:center;font-size:15px;cursor:pointer;font-weight:600}
+  .chip.on{background:var(--accent);border-color:var(--accent);color:#04101f}
+  .ring{display:block;margin:0 auto}
+  .task-now{text-align:center;color:var(--dim);font-size:14px;margin-bottom:4px;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;text-align:center}
+  .stats div b{display:block;font-size:20px}
+  .stats div span{font-size:11px;color:var(--dim)}
+  .list{font-size:13px}
+  .list .item{display:flex;justify-content:space-between;gap:10px;padding:9px 0;border-bottom:1px solid var(--line)}
+  .list .item:last-child{border-bottom:none}
+  .list .item span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .dot{width:7px;height:7px;border-radius:50%;display:inline-block;margin-right:7px;vertical-align:middle}
+  .top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:18px;gap:10px}
+  .top a{color:var(--dim);font-size:12px;text-decoration:none;border:1px solid var(--line);
+    padding:6px 10px;border-radius:8px;margin-left:6px;white-space:nowrap}
+  .modal{position:fixed;inset:0;background:rgba(6,8,12,.82);display:flex;align-items:flex-end;
+    justify-content:center;padding:16px;z-index:9}
+  .modal .card{width:100%;max-width:460px;margin:0}
+  .quick{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+  .quick button{background:#0f1218;border:1px solid var(--line);color:var(--dim);
+    border-radius:20px;padding:8px 13px;font-size:13px}
+  @media(min-width:520px){.modal{align-items:center}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- LOGIN -->
+  <section id="loginView">
+    <h1 id="bizTitle">FocusTrack</h1>
+    <p class="sub">Sign in to start your focus session</p>
+    <div class="card">
+      <label>Your name</label>
+      <input id="lName" autocomplete="username" placeholder="e.g. Ravi">
+      <div class="gap"></div>
+      <label>PIN</label>
+      <input id="lPin" type="password" inputmode="numeric" autocomplete="current-password" placeholder="4-digit PIN">
+      <button class="btn" id="loginBtn">Sign in</button>
+      <div class="err" id="loginErr"></div>
+    </div>
+  </section>
+
+  <!-- APP -->
+  <section id="appView" class="hidden">
+    <div class="top">
+      <div>
+        <h1 id="hello">Hi</h1>
+        <p class="sub" id="dateLine" style="margin:0"></p>
+      </div>
+      <div>
+        <a href="#" id="adminLink" class="hidden">Dashboard</a>
+        <a href="#" id="logout">Sign out</a>
+      </div>
+    </div>
+
+    <div class="card" id="startCard">
+      <label>What are you going to do?</label>
+      <textarea id="task" rows="2" placeholder="e.g. Finish the Sharma quotation"></textarea>
+      <div class="gap"></div>
+      <label>For how long?</label>
+      <div class="chips" id="chips">
+        <div class="chip" data-m="15">15m</div>
+        <div class="chip on" data-m="30">30m</div>
+        <div class="chip" data-m="45">45m</div>
+        <div class="chip" data-m="60">60m</div>
+      </div>
+      <button class="btn" id="startBtn">Start</button>
+      <div class="err" id="startErr"></div>
+    </div>
+
+    <div class="card hidden" id="runCard">
+      <p class="task-now" id="taskNow"></p>
+      <svg class="ring" width="180" height="180" viewBox="0 0 180 180">
+        <circle cx="90" cy="90" r="80" fill="none" stroke="#262a34" stroke-width="10"/>
+        <circle id="prog" cx="90" cy="90" r="80" fill="none" stroke="#4f9cf9" stroke-width="10"
+                stroke-linecap="round" transform="rotate(-90 90 90)"
+                stroke-dasharray="502.65" stroke-dashoffset="0"/>
+        <text id="ringTxt" x="90" y="90" text-anchor="middle" dominant-baseline="central"
+              fill="#e9ecf1" font-size="34" font-weight="700"
+              font-family="-apple-system,Segoe UI,Roboto,sans-serif"
+              style="font-variant-numeric:tabular-nums">30:00</text>
+      </svg>
+      <p class="task-now" id="distLine" style="margin-top:10px">No distractions yet</p>
+      <button class="btn warn" id="distBtn">I got distracted</button>
+      <div class="row">
+        <button class="btn good" id="doneBtn">Done early</button>
+        <button class="btn bad" id="stopBtn">Give up</button>
+      </div>
+    </div>
+
+    <div class="card hidden" id="doneCard" style="text-align:center">
+      <div style="font-size:44px">🎉</div>
+      <h1 id="doneTitle" style="margin:8px 0">Session complete</h1>
+      <p class="sub" id="doneSub" style="margin-bottom:0"></p>
+      <button class="btn" id="againBtn">Start another</button>
+    </div>
+
+    <div class="card">
+      <label style="margin-bottom:14px">Today</label>
+      <div class="stats" id="todayStats">
+        <div><b>0</b><span>sessions</span></div>
+        <div><b>0</b><span>completed</span></div>
+        <div><b>0</b><span>focus min</span></div>
+        <div><b>0</b><span>distractions</span></div>
+      </div>
+    </div>
+
+    <div class="card" id="recentCard">
+      <label style="margin-bottom:6px">Recent sessions</label>
+      <div class="list" id="recent"></div>
+    </div>
+  </section>
+</div>
+
+<div class="modal hidden" id="distModal">
+  <div class="card">
+    <label>What distracted you? (timer keeps running)</label>
+    <input id="distInput" placeholder="e.g. WhatsApp notification">
+    <div class="quick" id="quickReasons"></div>
+    <div class="row">
+      <button class="btn ghost" id="distCancel">Cancel</button>
+      <button class="btn warn" id="distSave">Log it</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const SLUG = location.pathname.split('/').filter(Boolean)[0] || '';
+const KEY = 'ft_token_' + SLUG;
+
+let token = localStorage.getItem(KEY) || '';
+let me = null, session = null, planned = 30, tick = null, skew = 0, distractions = 0;
+
+const api = async (path, opts = {}) => {
+  const r = await fetch(path, {
+    ...opts,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: 'Bearer ' + token } : {}),
+      ...(opts.headers || {}),
+    },
+  });
+  const data = await r.json().catch(() => ({}));
+  if (r.status === 401) { signOut(); throw new Error(data.error || 'Session expired'); }
+  if (!r.ok) throw new Error(data.error || 'Something went wrong');
+  return data;
+};
+
+const escapeHtml = (s) => String(s).replace(/[&<>"]/g, (c) =>
+  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+const QUICK = ['Phone / WhatsApp', 'Someone called me', 'Email / Slack', 'Tea / break',
+               'Feeling tired', 'Waiting on someone', 'Social media', 'Personal work'];
+
+// ---------- auth ----------
+function signOut() {
+  localStorage.removeItem(KEY);
+  token = ''; me = null; session = null;
+  clearInterval(tick);
+  document.title = 'FocusTrack';
+  $('#appView').classList.add('hidden');
+  $('#loginView').classList.remove('hidden');
+}
+
+$('#loginBtn').onclick = async () => {
+  $('#loginErr').textContent = '';
+  try {
+    const d = await api('/api/login', {
+      method: 'POST',
+      body: JSON.stringify({ slug: SLUG, name: $('#lName').value, pin: $('#lPin').value }),
+    });
+    token = d.token;
+    localStorage.setItem(KEY, token);
+    me = d.user;
+    boot();
+  } catch (e) { $('#loginErr').textContent = e.message; }
+};
+$('#lPin').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#loginBtn').click(); });
+$('#logout').onclick = async (e) => {
+  e.preventDefault();
+  try { await api('/api/logout', { method: 'POST' }); } catch {}
+  signOut();
+};
+
+// ---------- start ----------
+$('#chips').onclick = (e) => {
+  const c = e.target.closest('.chip');
+  if (!c) return;
+  document.querySelectorAll('.chip').forEach((x) => x.classList.remove('on'));
+  c.classList.add('on');
+  planned = Number(c.dataset.m);
+};
+
+$('#startBtn').onclick = async () => {
+  $('#startErr').textContent = '';
+  try {
+    const d = await api('/api/sessions/start', {
+      method: 'POST',
+      body: JSON.stringify({ task: $('#task').value, planned_minutes: planned }),
+    });
+    skew = Date.now() - new Date(d.serverTime).getTime();
+    session = d.session; distractions = 0;
+    showRunning();
+  } catch (e) { $('#startErr').textContent = e.message; }
+};
+
+// ---------- running ----------
+function showRunning() {
+  $('#startCard').classList.add('hidden');
+  $('#doneCard').classList.add('hidden');
+  $('#recentCard').classList.add('hidden');
+  $('#runCard').classList.remove('hidden');
+  $('#taskNow').textContent = session.task;
+  updateDistLine();
+  clearInterval(tick);
+  tick = setInterval(render, 250);
+  render();
+}
+
+function remaining() {
+  const total = session.planned_minutes * 60;
+  const elapsed = (Date.now() - skew - new Date(session.started_at).getTime()) / 1000;
+  return Math.max(0, Math.round(total - elapsed));
+}
+
+function render() {
+  const left = remaining();
+  const total = session.planned_minutes * 60;
+  const m = String(Math.floor(left / 60)).padStart(2, '0');
+  const s = String(left % 60).padStart(2, '0');
+  $('#ringTxt').textContent = `${m}:${s}`;
+  document.title = `${m}:${s} · FocusTrack`;
+  const C = 2 * Math.PI * 80;
+  $('#prog').setAttribute('stroke-dashoffset', String(C * (1 - left / total)));
+  $('#prog').setAttribute('stroke', left / total < 0.15 ? '#3ecf8e' : '#4f9cf9');
+  if (left <= 0) finish('complete', true);
+}
+
+function updateDistLine() {
+  $('#distLine').textContent = distractions === 0
+    ? 'No distractions yet — keep going'
+    : `${distractions} distraction${distractions > 1 ? 's' : ''} logged`;
+}
+
+$('#distBtn').onclick = () => {
+  $('#distInput').value = '';
+  $('#distModal').classList.remove('hidden');
+  $('#distInput').focus();
+};
+$('#distCancel').onclick = () => $('#distModal').classList.add('hidden');
+$('#distInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#distSave').click(); });
+
+$('#quickReasons').innerHTML = QUICK.map((q) => `<button>${q}</button>`).join('');
+$('#quickReasons').onclick = (e) => {
+  if (e.target.tagName === 'BUTTON') { $('#distInput').value = e.target.textContent; $('#distSave').click(); }
+};
+
+$('#distSave').onclick = async () => {
+  const reason = $('#distInput').value.trim();
+  if (!reason) return;
+  try {
+    const d = await api(`/api/sessions/${session.id}/distraction`, {
+      method: 'POST', body: JSON.stringify({ reason }),
+    });
+    distractions = d.count;
+    updateDistLine();
+    $('#distModal').classList.add('hidden');
+  } catch (e) { alert(e.message); }
+};
+
+$('#doneBtn').onclick = () => finish('complete', false);
+$('#stopBtn').onclick = () => {
+  if (confirm('Give up this session? It will be recorded as not completed.')) finish('stop', false);
+};
+
+async function finish(kind, auto) {
+  clearInterval(tick);
+  const id = session.id;
+  const mins = Math.round((session.planned_minutes * 60 - remaining()) / 60);
+  try { await api(`/api/sessions/${id}/${kind === 'complete' ? 'complete' : 'stop'}`, { method: 'POST' }); }
+  catch (e) { /* already ended */ }
+  document.title = 'FocusTrack';
+  session = null;
+  $('#runCard').classList.add('hidden');
+  $('#doneCard').classList.remove('hidden');
+  $('#recentCard').classList.remove('hidden');
+  $('#doneTitle').textContent = kind === 'complete'
+    ? (auto ? 'Time’s up!' : 'Marked done') : 'Session stopped';
+  $('#doneSub').textContent =
+    `${mins} min focused · ${distractions} distraction${distractions === 1 ? '' : 's'}`;
+  loadToday();
+}
+
+$('#againBtn').onclick = () => {
+  $('#doneCard').classList.add('hidden');
+  $('#startCard').classList.remove('hidden');
+  $('#task').value = '';
+  $('#task').focus();
+};
+
+// ---------- today ----------
+async function loadToday() {
+  try {
+    const d = await api('/api/my/today');
+    const t = d.today;
+    $('#todayStats').innerHTML = `
+      <div><b>${t.sessions}</b><span>sessions</span></div>
+      <div><b>${t.completed}</b><span>completed</span></div>
+      <div><b>${t.focusedMinutes}</b><span>focus min</span></div>
+      <div><b>${t.distractions}</b><span>distractions</span></div>`;
+    $('#recent').innerHTML = d.recent.length
+      ? d.recent.map((r) => {
+          const color = r.status === 'completed' ? 'var(--good)' : 'var(--bad)';
+          const when = new Date(r.started_at).toLocaleString([], { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+          return `<div class="item">
+            <span><i class="dot" style="background:${color}"></i>${escapeHtml(r.task)}</span>
+            <span class="muted" style="white-space:nowrap">${when} · ${r.distractions}⚡</span>
+          </div>`;
+        }).join('')
+      : '<div class="empty">Nothing yet today.</div>';
+  } catch {}
+}
+
+// ---------- boot ----------
+async function boot() {
+  $('#loginView').classList.add('hidden');
+  $('#appView').classList.remove('hidden');
+  if (!me) me = (await api('/api/me')).user;
+  $('#hello').textContent = `Hi ${me.name.split(' ')[0]}`;
+  $('#dateLine').textContent = new Date().toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long' });
+  if (['owner', 'admin'].includes(me.role)) {
+    const a = $('#adminLink');
+    a.href = `/${SLUG}/admin`;
+    a.classList.remove('hidden');
+  }
+
+  const active = await api('/api/sessions/active');
+  if (active.session) {
+    skew = Date.now() - new Date(active.serverTime).getTime();
+    session = active.session;
+    distractions = active.distractions.length;
+    showRunning();
+  }
+  loadToday();
+}
+
+(async () => {
+  try {
+    const b = await (await fetch('/api/business/' + SLUG)).json();
+    if (b.business) $('#bizTitle').textContent = b.business.name;
+  } catch {}
+  if (token) boot().catch(() => signOut());
+})();
+</script>
+</body>
+</html>

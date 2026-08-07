@@ -1,12 +1,13 @@
 {
   "name": "focustrack",
   "version": "1.0.0",
-  "description": "Team focus-session tracker with distraction logging and admin dashboard",
+  "description": "Multi-tenant focus-session tracker with distraction logging, business dashboards and a master admin panel",
   "main": "server.js",
   "type": "commonjs",
   "scripts": {
     "start": "node server.js",
-    "seed": "node seed.js"
+    "seed": "node seed.js",
+    "test": "node test.js && node test-migration.js"
   },
   "engines": {
     "node": ">=18"

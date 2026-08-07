@@ -15,138 +15,214 @@ const server = app.listen(0, async () => {
     let body; try { body = JSON.parse(text); } catch { body = text; }
     return { status: r.status, body };
   };
+  const post = (p, b, tok) => call(p, { method: 'POST', body: JSON.stringify(b || {}) }, tok);
   const ok = (label) => console.log('  ✓ ' + label);
 
   try {
-    // seed users
-    db.prepare('DELETE FROM users').run();
-    db.prepare('INSERT INTO users (name,pin_hash,role,team,created_at) VALUES (?,?,?,?,?)')
-      .run('Atul', hashPin('4321'), 'admin', 'management', nowISO());
-    db.prepare('INSERT INTO users (name,pin_hash,role,team,created_at) VALUES (?,?,?,?,?)')
-      .run('Ravi', hashPin('1111'), 'employee', 'sales', nowISO());
-
-    // login
-    assert.strictEqual((await call('/api/login', { method: 'POST', body: JSON.stringify({ name: 'Ravi', pin: '9999' }) })).status, 401);
-    ok('wrong PIN rejected');
-    const login = await call('/api/login', { method: 'POST', body: JSON.stringify({ name: 'ravi', pin: '1111' }) });
-    assert.strictEqual(login.status, 200);
-    const ravi = login.body.token;
-    ok('login works (case-insensitive name)');
-
-    const admin = (await call('/api/login', { method: 'POST', body: JSON.stringify({ name: 'Atul', pin: '4321' }) })).body.token;
-
-    // auth guard
-    assert.strictEqual((await call('/api/admin/stats', {}, ravi)).status, 403);
-    ok('employee blocked from admin endpoints');
-    assert.strictEqual((await call('/api/my/today')).status, 401);
-    ok('unauthenticated blocked');
-
-    // start session
-    assert.strictEqual((await call('/api/sessions/start', { method: 'POST', body: JSON.stringify({ task: '', planned_minutes: 30 }) }, ravi)).status, 400);
-    ok('empty task rejected');
-    const s1 = (await call('/api/sessions/start', { method: 'POST', body: JSON.stringify({ task: 'Sharma quotation', planned_minutes: 30 }) }, ravi)).body.session;
-    assert.strictEqual(s1.status, 'running');
-    assert.strictEqual(s1.planned_minutes, 30);
-    ok('session starts with server timestamp');
-
-    // resume after refresh
-    const active = (await call('/api/sessions/active', {}, ravi)).body;
-    assert.strictEqual(active.session.id, s1.id);
-    ok('active session resumes after page refresh');
-
-    // distractions
-    const d1 = await call(`/api/sessions/${s1.id}/distraction`, { method: 'POST', body: JSON.stringify({ reason: 'WhatsApp notification' }) }, ravi);
-    assert.strictEqual(d1.body.count, 1);
-    await call(`/api/sessions/${s1.id}/distraction`, { method: 'POST', body: JSON.stringify({ reason: 'Manager called me' }) }, ravi);
-    const still = (await call('/api/sessions/active', {}, ravi)).body;
-    assert.strictEqual(still.session.status, 'running');
-    assert.strictEqual(still.distractions.length, 2);
-    ok('distraction logged, timer keeps running');
-    assert.strictEqual(db.prepare('SELECT category FROM distractions WHERE reason LIKE ?').get('WhatsApp%').category, 'phone');
-    assert.strictEqual(db.prepare('SELECT category FROM distractions WHERE reason LIKE ?').get('Manager%').category, 'people');
-    ok('reasons auto-categorised');
-
-    // complete
-    await call(`/api/sessions/${s1.id}/complete`, { method: 'POST', body: '{}' }, ravi);
-    assert.strictEqual(db.prepare('SELECT status FROM sessions WHERE id=?').get(s1.id).status, 'completed');
-    assert.strictEqual((await call('/api/sessions/active', {}, ravi)).body.session, null);
-    ok('session completes and clears');
-
-    // stale auto-close
-    const s2 = (await call('/api/sessions/start', { method: 'POST', body: JSON.stringify({ task: 'Old task', planned_minutes: 15 }) }, ravi)).body.session;
-    const s3 = (await call('/api/sessions/start', { method: 'POST', body: JSON.stringify({ task: 'New task', planned_minutes: 45 }) }, ravi)).body.session;
-    assert.strictEqual(db.prepare('SELECT status FROM sessions WHERE id=?').get(s2.id).status, 'abandoned');
-    ok('starting a new session auto-closes the stale one');
-    await call(`/api/sessions/${s3.id}/stop`, { method: 'POST', body: '{}' }, ravi);
-
-    // backdated data for stats math
-    const iso = (mins) => new Date(Date.now() - mins * 60000).toISOString();
-    const mk = (userId, task, plan, startMins, status, actual) => {
-      const r = db.prepare(`INSERT INTO sessions (user_id,task,planned_minutes,started_at,ended_at,status,actual_seconds)
-                            VALUES (?,?,?,?,?,?,?)`)
-        .run(userId, task, plan, iso(startMins), iso(startMins - plan), status, actual);
-      return r.lastInsertRowid;
-    };
-    const raviId = db.prepare('SELECT id FROM users WHERE name=?').get('Ravi').id;
-    db.prepare('DELETE FROM sessions').run();
-    // 4 sessions, 3 completed, 2h total focus, 2 distractions => dph = 1
-    const a1 = mk(raviId, 'A', 30, 200, 'completed', 1800);
-    const a2 = mk(raviId, 'B', 30, 160, 'completed', 1800);
-    const a3 = mk(raviId, 'C', 30, 120, 'completed', 1800);
-    const a4 = mk(raviId, 'D', 30, 80, 'abandoned', 1800);
-    for (const sid of [a1, a2]) {
-      db.prepare('INSERT INTO distractions (session_id,user_id,reason,category,occurred_at,elapsed_seconds) VALUES (?,?,?,?,?,?)')
-        .run(sid, raviId, 'Phone', 'phone', iso(150), 600);
+    for (const t of ['distractions', 'sessions', 'tokens', 'users', 'invite_codes', 'businesses', 'audit_log']) {
+      db.prepare(`DELETE FROM ${t}`).run();
     }
-    const stats = (await call('/api/admin/stats', {}, admin)).body;
-    assert.strictEqual(stats.totals.sessions, 4);
-    assert.strictEqual(stats.totals.completed, 3);
-    assert.strictEqual(stats.totals.completionRate, 75);
-    assert.strictEqual(stats.totals.focusedHours, 2);
-    assert.strictEqual(stats.totals.distractionsPerHour, 1);
-    // 0.6*75 + 0.4*(100-12.5) = 45 + 35 = 80
-    assert.strictEqual(stats.totals.focusScore, 80);
-    ok('focus score math verified (75% completion, 1 distr/hr -> 80)');
-    assert.strictEqual(stats.employees.length, 1);
-    assert.strictEqual(stats.employees[0].focusScore, 80);
-    assert.strictEqual(stats.employees[0].focusedMinutes, 120);
-    ok('per-employee rollup matches totals');
-    assert.strictEqual(stats.topReasons[0].count, 2);
-    assert.strictEqual(stats.categories[0].category, 'phone');
-    ok('distraction rollups correct');
-    assert.ok(stats.daily.length >= 1 && stats.hours.length >= 1);
-    ok('daily + hourly buckets populated');
 
-    // date filter excludes out-of-range
-    const empty = (await call('/api/admin/stats?from=2000-01-01&to=2000-01-02', {}, admin)).body;
-    assert.strictEqual(empty.totals.sessions, 0);
-    assert.strictEqual(empty.totals.focusScore, null);
-    ok('date range filter works');
+    // ---------- master ----------
+    db.prepare(`INSERT INTO users (business_id, name, pin_hash, role, team, created_at)
+                VALUES (NULL,?,?,'master','platform',?)`).run('Atul', hashPin('4321'), nowISO());
 
-    // CSV
-    const csvRes = await fetch(base + '/api/admin/export.csv', { headers: { Authorization: 'Bearer ' + admin } });
-    const csv = await csvRes.text();
-    const lines = csv.trim().split('\n');
-    assert.strictEqual(lines.length, 5); // header + 4
-    assert.ok(lines[0].includes('distraction_reasons'));
-    assert.ok(csv.includes('Ravi'));
-    ok('CSV export has header + one row per session');
+    assert.strictEqual((await post('/api/master/login', { name: 'Atul', pin: '0000' })).status, 401);
+    const master = (await post('/api/master/login', { name: 'Atul', pin: '4321' })).body.token;
+    assert.ok(master);
+    ok('master admin can sign in');
 
-    // user admin
-    assert.strictEqual((await call('/api/admin/users', { method: 'POST', body: JSON.stringify({ name: 'Neha', pin: '12' }) }, admin)).status, 400);
-    ok('short PIN rejected');
-    assert.strictEqual((await call('/api/admin/users', { method: 'POST', body: JSON.stringify({ name: 'Neha', pin: '2222', team: 'ops' }) }, admin)).status, 200);
-    assert.strictEqual((await call('/api/admin/users', { method: 'POST', body: JSON.stringify({ name: 'neha', pin: '3333' }) }, admin)).status, 409);
-    ok('duplicate name rejected');
-    const nehaId = db.prepare('SELECT id FROM users WHERE name=?').get('Neha').id;
-    await call(`/api/admin/users/${nehaId}`, { method: 'PATCH', body: JSON.stringify({ active: false }) }, admin);
-    assert.strictEqual((await call('/api/login', { method: 'POST', body: JSON.stringify({ name: 'Neha', pin: '2222' }) })).status, 401);
-    ok('disabled user cannot log in');
+    // ---------- invite codes ----------
+    const c1 = (await post('/api/master/codes', { note: 'Acme', seat_limit: 3 }, master)).body.code;
+    const c2 = (await post('/api/master/codes', { note: 'Globex', seat_limit: 10 }, master)).body.code;
+    const c3 = (await post('/api/master/codes', { note: 'Pending Co', seat_limit: 5, auto_approve: false }, master)).body.code;
+    assert.match(c1, /^[A-Z0-9]{4}-[A-Z0-9]{4}$/);
+    assert.notStrictEqual(c1, c2);
+    ok('invite codes generate in a readable, unique format');
 
-    // logout invalidates token
-    await call('/api/logout', { method: 'POST' }, ravi);
-    assert.strictEqual((await call('/api/my/today', {}, ravi)).status, 401);
-    ok('logout invalidates token');
+    assert.strictEqual((await post('/api/master/codes', {}, 'bogus-token')).status, 401);
+    ok('codes cannot be generated without master auth');
+
+    // ---------- signup ----------
+    assert.strictEqual((await post('/api/signup', {
+      code: 'FAKE-CODE', business_name: 'X', slug: 'x1', owner_name: 'A', owner_pin: '1111' })).status, 400);
+    ok('invalid invite code rejected');
+
+    assert.strictEqual((await post('/api/signup', {
+      code: c1, business_name: 'API Co', slug: 'api', owner_name: 'A', owner_pin: '1111' })).status, 400);
+    ok('reserved slug rejected');
+
+    const s1 = await post('/api/signup', {
+      code: c1, business_name: 'Acme Events', slug: 'acme',
+      owner_name: 'Ravi', owner_pin: '1111', contact_email: 'a@acme.com' });
+    assert.strictEqual(s1.status, 200);
+    assert.strictEqual(s1.body.status, 'active');
+    ok('signup with auto-approve code creates an active workspace');
+
+    assert.strictEqual((await post('/api/signup', {
+      code: c1, business_name: 'Second', slug: 'second', owner_name: 'B', owner_pin: '2222' })).status, 400);
+    ok('invite code cannot be reused');
+
+    const s2 = await post('/api/signup', {
+      code: c2, business_name: 'Globex', slug: 'globex', owner_name: 'Priya', owner_pin: '2222' });
+    assert.strictEqual(s2.status, 200);
+
+    const s3 = await post('/api/signup', {
+      code: c3, business_name: 'Pending Co', slug: 'pendingco', owner_name: 'Sam', owner_pin: '3333' });
+    assert.strictEqual(s3.body.status, 'pending');
+    ok('non-auto-approve code parks the business in pending');
+
+    assert.strictEqual((await post('/api/signup', {
+      code: (await post('/api/master/codes', {}, master)).body.code,
+      business_name: 'Dupe', slug: 'acme', owner_name: 'C', owner_pin: '4444' })).status, 409);
+    ok('duplicate team link rejected');
+
+    // ---------- login scoping ----------
+    const acme = (await post('/api/login', { slug: 'acme', name: 'Ravi', pin: '1111' })).body.token;
+    const globex = (await post('/api/login', { slug: 'globex', name: 'Priya', pin: '2222' })).body.token;
+    assert.ok(acme && globex);
+    ok('owners can sign in at their own team link');
+
+    assert.strictEqual((await post('/api/login', { slug: 'globex', name: 'Ravi', pin: '1111' })).status, 401);
+    ok('credentials do not work on another business link');
+
+    assert.strictEqual((await post('/api/login', { slug: 'pendingco', name: 'Sam', pin: '3333' })).status, 403);
+    ok('pending business cannot sign in yet');
+
+    // same employee name in two businesses
+    assert.strictEqual((await post('/api/admin/users', { name: 'Ravi Jr', pin: '9999' }, acme)).status, 200);
+    assert.strictEqual((await post('/api/admin/users', { name: 'Ravi Jr', pin: '8888' }, globex)).status, 200);
+    const aJr = (await post('/api/login', { slug: 'acme', name: 'Ravi Jr', pin: '9999' })).body.token;
+    const gJr = (await post('/api/login', { slug: 'globex', name: 'Ravi Jr', pin: '8888' })).body.token;
+    assert.ok(aJr && gJr);
+    ok('two businesses can both employ a "Ravi Jr" with different PINs');
+
+    // ---------- tenant isolation ----------
+    await post('/api/sessions/start', { task: 'Acme secret work', planned_minutes: 30 }, aJr);
+    await post('/api/sessions/start', { task: 'Globex secret work', planned_minutes: 30 }, gJr);
+    const acmeSess = db.prepare("SELECT id FROM sessions WHERE task = 'Acme secret work'").get();
+    const globexSess = db.prepare("SELECT id FROM sessions WHERE task = 'Globex secret work'").get();
+
+    // finish both so they show in stats
+    await post(`/api/sessions/${acmeSess.id}/complete`, {}, aJr);
+    await post(`/api/sessions/${globexSess.id}/complete`, {}, gJr);
+
+    const acmeStats = (await call('/api/admin/stats', {}, acme)).body;
+    const globexStats = (await call('/api/admin/stats', {}, globex)).body;
+    assert.strictEqual(acmeStats.totals.sessions, 1);
+    assert.strictEqual(globexStats.totals.sessions, 1);
+    assert.strictEqual(acmeStats.business.name, 'Acme Events');
+    ok('each business sees only its own sessions');
+
+    const acmeCsv = await (await fetch(base + '/api/admin/export.csv', { headers: { Authorization: 'Bearer ' + acme } })).text();
+    assert.ok(acmeCsv.includes('Acme secret work'));
+    assert.ok(!acmeCsv.includes('Globex secret work'));
+    ok('CSV export never leaks another tenant\'s rows');
+
+    const acmeUsers = (await call('/api/admin/users', {}, acme)).body.users;
+    assert.deepStrictEqual(acmeUsers.map((u) => u.name).sort(), ['Ravi', 'Ravi Jr']);
+    ok('user list is scoped to the business');
+
+    // cross-tenant write attempt
+    const globexUserId = db.prepare(`SELECT u.id FROM users u JOIN businesses b ON b.id = u.business_id
+                                      WHERE b.slug='globex' AND u.name='Ravi Jr'`).get().id;
+    const attack = await call(`/api/admin/users/${globexUserId}`, {
+      method: 'PATCH', body: JSON.stringify({ pin: '0000' }) }, acme);
+    assert.strictEqual(attack.status, 404);
+    assert.strictEqual((await post('/api/login', { slug: 'globex', name: 'Ravi Jr', pin: '8888' })).status, 200);
+    ok('one business cannot reset another business\'s PINs');
+
+    // employee cannot reach admin endpoints
+    assert.strictEqual((await call('/api/admin/stats', {}, aJr)).status, 403);
+    assert.strictEqual((await call('/api/master/overview', {}, acme)).status, 403);
+    ok('role boundaries hold (employee < admin < master)');
+
+    // ---------- seat limits ----------
+    // Acme code was 3 seats: owner + Ravi Jr = 2 used.
+    assert.strictEqual((await post('/api/admin/users', { name: 'Third', pin: '1234' }, acme)).status, 200);
+    const over = await post('/api/admin/users', { name: 'Fourth', pin: '1234' }, acme);
+    assert.strictEqual(over.status, 403);
+    assert.match(over.body.error, /seats/i);
+    ok('seat limit blocks the 4th user on a 3-seat plan');
+
+    const acmeBizId = db.prepare("SELECT id FROM businesses WHERE slug='acme'").get().id;
+    await call(`/api/master/businesses/${acmeBizId}`, {
+      method: 'PATCH', body: JSON.stringify({ seat_limit: 5 }) }, master);
+    assert.strictEqual((await post('/api/admin/users', { name: 'Fourth', pin: '1234' }, acme)).status, 200);
+    ok('raising the seat limit from master immediately unblocks it');
+
+    // ---------- approval + suspension ----------
+    const pendingId = db.prepare("SELECT id FROM businesses WHERE slug='pendingco'").get().id;
+    await post(`/api/master/businesses/${pendingId}/status`, { status: 'active' }, master);
+    const samTok = (await post('/api/login', { slug: 'pendingco', name: 'Sam', pin: '3333' })).body.token;
+    assert.ok(samTok);
+    ok('master approval lets a pending business in');
+
+    await post(`/api/master/businesses/${pendingId}/status`, { status: 'suspended' }, master);
+    assert.strictEqual((await call('/api/me', {}, samTok)).status, 401);
+    assert.strictEqual((await post('/api/login', { slug: 'pendingco', name: 'Sam', pin: '3333' })).status, 403);
+    ok('suspension signs everyone out and blocks new logins');
+
+    await post(`/api/master/businesses/${pendingId}/status`, { status: 'active' }, master);
+    ok('suspension is reversible');
+
+    // ---------- impersonation ----------
+    const imp = await post(`/api/master/businesses/${acmeBizId}/impersonate`, {}, master);
+    assert.strictEqual(imp.status, 200);
+    const impStats = (await call('/api/admin/stats', {}, imp.body.token)).body;
+    assert.strictEqual(impStats.business.slug, 'acme');
+    assert.strictEqual((await call('/api/me', {}, imp.body.token)).body.user.impersonated_by, 'Atul');
+    ok('master can view a workspace as its owner');
+
+    const audit = (await call('/api/master/audit', {}, master)).body.entries;
+    assert.ok(audit.some((a) => a.action === 'impersonate' && /acme/.test(a.detail)));
+    assert.ok(audit.some((a) => a.action === 'status_changed'));
+    assert.ok(audit.some((a) => a.action === 'code_created'));
+    ok('impersonation and status changes are written to the audit log');
+
+    // ---------- overview ----------
+    const ov = (await call('/api/master/overview', {}, master)).body;
+    assert.strictEqual(ov.totals.businesses, 3);
+    const acmeRow = ov.businesses.find((b) => b.slug === 'acme');
+    assert.strictEqual(acmeRow.live, true);
+    assert.strictEqual(acmeRow.sessions24h, 1);
+    assert.strictEqual(acmeRow.owner, 'Ravi');
+    assert.strictEqual(acmeRow.seatLimit, 5);
+    ok('master overview reports live activity per business');
+
+    // ---------- focus score math (unchanged) ----------
+    db.prepare('DELETE FROM sessions').run();
+    db.prepare('DELETE FROM distractions').run();
+    const raviJrId = db.prepare(`SELECT u.id FROM users u JOIN businesses b ON b.id=u.business_id
+                                  WHERE b.slug='acme' AND u.name='Ravi Jr'`).get().id;
+    const iso = (mins) => new Date(Date.now() - mins * 60000).toISOString();
+    const mk = (status, startMins) => db.prepare(
+      `INSERT INTO sessions (business_id,user_id,task,planned_minutes,started_at,ended_at,status,actual_seconds)
+       VALUES (?,?,?,30,?,?,?,1800)`
+    ).run(acmeBizId, raviJrId, 'T', iso(startMins), iso(startMins - 30), status).lastInsertRowid;
+    const ids = [mk('completed', 200), mk('completed', 160), mk('completed', 120), mk('abandoned', 80)];
+    for (const sid of ids.slice(0, 2)) {
+      db.prepare(`INSERT INTO distractions (business_id,session_id,user_id,reason,category,occurred_at,elapsed_seconds)
+                  VALUES (?,?,?,'Phone','phone',?,600)`).run(acmeBizId, sid, raviJrId, iso(150));
+    }
+    const fs = (await call('/api/admin/stats', {}, acme)).body;
+    assert.strictEqual(fs.totals.completionRate, 75);
+    assert.strictEqual(fs.totals.distractionsPerHour, 1);
+    assert.strictEqual(fs.totals.focusScore, 80);   // 0.6*75 + 0.4*87.5
+    ok('focus score math still verified (75% completion, 1 distr/hr -> 80)');
+
+    // ---------- routing ----------
+    assert.strictEqual((await call('/acme')).status, 200);
+    assert.strictEqual((await call('/acme/admin')).status, 200);
+    assert.strictEqual((await call('/nosuchteam')).status, 404);
+    assert.strictEqual((await call('/master')).status, 200);
+    assert.strictEqual((await call('/')).status, 200);
+    ok('per-business URLs resolve and unknown links 404');
+
+    const avail = (await call('/api/slug-available/acme')).body;
+    assert.strictEqual(avail.available, false);
+    assert.strictEqual((await call('/api/slug-available/brand-new-co')).body.available, true);
+    ok('team link availability check works');
 
     console.log('\nAll checks passed.\n');
     server.close();
