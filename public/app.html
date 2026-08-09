@@ -5,7 +5,29 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>FocusTrack</title>
 <link rel="stylesheet" href="/style.css">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⏱️</text></svg>">
+<meta name="theme-color" content="#0f1115">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="FocusTrack">
+<link rel="icon" href="/icons/favicon-64.png">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<script>
+(function () {
+  var reserved = { master: 1, api: 1, admin: 1, health: 1 };
+  var seg = location.pathname.split('/').filter(Boolean)[0] || '';
+  var slug = (/^[a-z0-9][a-z0-9-]{1,31}$/.test(seg) && !reserved[seg]) ? seg : '';
+  var l = document.createElement('link');
+  l.rel = 'manifest';
+  l.href = slug ? '/' + slug + '/manifest.webmanifest' : '/manifest.webmanifest';
+  document.head.appendChild(l);
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', function () {
+      navigator.serviceWorker.register('/sw.js').catch(function () {});
+    });
+  }
+})();
+</script>
 <style>
   body{display:flex;flex-direction:column;align-items:center;padding:20px 16px 48px}
   .wrap{width:100%;max-width:460px}
@@ -124,6 +146,15 @@
       <div class="list" id="recent"></div>
     </div>
   </section>
+</div>
+
+<div class="wrap">
+  <div class="card hidden" id="installCard" style="text-align:center;margin-top:4px">
+    <div style="font-size:13px;color:var(--dim);line-height:1.5" id="installMsg">
+      Add this to your home screen so it opens like an app.
+    </div>
+    <button class="btn hidden" id="installBtn" style="margin-top:12px">Install app</button>
+  </div>
 </div>
 
 <div class="modal hidden" id="distModal">
@@ -358,6 +389,48 @@ async function boot() {
   }
   loadToday();
 }
+
+// ---------- install to home screen ----------
+// Android/Chrome hands us a real prompt. iOS has no API, so all we can do is
+// tell people where the button is — and only when they're actually in Safari,
+// since inside Chrome or Instagram's browser on iOS there's nothing to tap.
+(function installPrompt() {
+  const installed = window.matchMedia('(display-mode: standalone)').matches
+    || window.navigator.standalone === true;
+  if (installed || localStorage.getItem('ft_install_dismissed')) return;
+
+  let deferred = null;
+  const card = $('#installCard');
+  const btn = $('#installBtn');
+
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    deferred = e;
+    $('#installMsg').textContent = 'Install FocusTrack for one-tap access from your home screen.';
+    btn.classList.remove('hidden');
+    card.classList.remove('hidden');
+  });
+
+  btn.onclick = async () => {
+    if (!deferred) return;
+    deferred.prompt();
+    const { outcome } = await deferred.userChoice;
+    deferred = null;
+    card.classList.add('hidden');
+    if (outcome === 'dismissed') localStorage.setItem('ft_install_dismissed', '1');
+  };
+
+  window.addEventListener('appinstalled', () => card.classList.add('hidden'));
+
+  const ua = navigator.userAgent;
+  const isIOS = /iphone|ipad|ipod/i.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const isSafari = /safari/i.test(ua) && !/crios|fxios|edgios|line|fban|fbav|instagram/i.test(ua);
+  if (isIOS && isSafari) {
+    $('#installMsg').innerHTML =
+      'To install: tap <b>Share</b> at the bottom, then <b>Add to Home Screen</b>.';
+    card.classList.remove('hidden');
+  }
+})();
 
 (async () => {
   try {

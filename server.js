@@ -738,6 +738,54 @@ const page = (file) => (req, res) => res.sendFile(path.join(__dirname, 'public',
 app.get('/master', page('master.html'));
 app.get('/health', (req, res) => res.json({ ok: true, time: nowISO() }));
 
+// --- installable app (PWA) ---
+// Each business gets its own manifest so the installed icon carries their name
+// and opens straight at their team link instead of the public signup page.
+const ICONS = [
+  { src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
+  { src: '/icons/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
+  { src: '/icons/maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+];
+
+// Home-screen labels get truncated around 12 characters, so cut at a word
+// boundary rather than mid-word ("U2ber Club" beats "U2ber Club S").
+function shorten(name) {
+  const n = String(name).trim();
+  if (n.length <= 12) return n;
+  const cut = n.slice(0, 12);
+  const space = cut.lastIndexOf(' ');
+  return (space > 3 ? cut.slice(0, space) : cut).trim();
+}
+
+const manifest = (name, shortName, startUrl, scope) => ({
+  name,
+  short_name: shorten(shortName),
+  description: 'Work in timed blocks and log what pulls you away.',
+  start_url: startUrl,
+  scope,
+  id: scope,
+  display: 'standalone',
+  orientation: 'portrait',
+  background_color: '#0f1115',
+  theme_color: '#0f1115',
+  categories: ['productivity', 'business'],
+  icons: ICONS,
+});
+
+app.get('/manifest.webmanifest', (req, res) => {
+  res.type('application/manifest+json');
+  res.json(manifest('FocusTrack', 'FocusTrack', '/', '/'));
+});
+
+app.get('/:slug/manifest.webmanifest', (req, res, next) => {
+  const slug = slugify(req.params.slug);
+  if (!validSlug(slug)) return next();
+  const biz = db.prepare('SELECT name, slug FROM businesses WHERE slug = ?').get(slug);
+  if (!biz) return next();
+  res.type('application/manifest+json');
+  res.json(manifest(`${biz.name} · FocusTrack`, biz.name, `/${biz.slug}`, `/${biz.slug}`));
+});
+
 app.get('/:slug', (req, res, next) => {
   const slug = slugify(req.params.slug);
   if (!validSlug(slug)) return next();
