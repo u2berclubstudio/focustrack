@@ -56,7 +56,7 @@
       </select>
       <input type="date" id="from" class="hidden">
       <input type="date" id="to" class="hidden">
-      <select id="userFilter"><option value="">All employees</option></select>
+      <select id="userFilter"><option value="">All team members</option></select>
       <button class="btn sm" id="refresh">Refresh</button>
       <a class="linkbtn" id="csv" href="#">Export CSV</a>
       <a class="linkbtn" id="timerLink" href="#">My timer</a>
@@ -69,7 +69,7 @@
   <div class="gap"></div>
   <div class="grid cols">
     <div class="card">
-      <h2>EMPLOYEES</h2>
+      <h2>TEAM MEMBERS</h2>
       <table id="empTable">
         <thead><tr>
           <th>Name</th><th>Focus score</th><th>Sessions</th><th>Completed</th>
@@ -77,7 +77,7 @@
         </tr></thead>
         <tbody></tbody>
       </table>
-      <div class="empty hidden" id="empEmpty">No sessions in this range.</div>
+      <div class="empty hidden" id="empEmpty">No sessions from your team in this range.</div>
     </div>
 
     <div class="card">
@@ -109,18 +109,18 @@
 
   <div class="gap"></div>
   <div class="card">
-    <h2>YOUR TEAM</h2>
+    <h2>YOUR TEAM MEMBERS</h2>
     <div class="userrow">
       <input type="text" id="nName" placeholder="Name">
       <input type="password" id="nPin" placeholder="PIN (4+ digits)">
-      <input type="text" id="nTeam" placeholder="Team (optional)">
-      <select id="nRole"><option value="employee">Employee</option><option value="admin">Admin</option></select>
+      <input type="text" id="nTeam" placeholder="Department (optional)">
+      <select id="nRole"><option value="employee">Team member</option><option value="admin">Admin</option></select>
       <button class="btn sm" id="addUser">Add</button>
       <span class="err" id="userErr" style="margin:0"></span>
       <span class="seats" id="seats"></span>
     </div>
     <table id="userTable">
-      <thead><tr><th>Name</th><th>Role</th><th>Team</th><th>Status</th><th></th></tr></thead>
+      <thead><tr><th>Name</th><th>Role</th><th>Department</th><th>Status</th><th></th></tr></thead>
       <tbody></tbody>
     </table>
     <div class="muted" style="font-size:12px;margin-top:14px" id="staffLink"></div>
@@ -143,6 +143,7 @@ const api = async (p, o = {}) => {
 };
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const scoreColor = (v) => v >= 80 ? 'var(--good)' : v >= 60 ? 'var(--warn)' : 'var(--bad)';
+const roleLabel = (r) => ({ owner: 'Owner', admin: 'Admin', employee: 'Team member' }[r] || r);
 const fmtMin = (m) => m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`;
 
 $('#timerLink').href = '/' + SLUG;
@@ -221,7 +222,7 @@ async function load() {
     ['Focused hours', t.focusedHours, 'var(--txt)'],
     ['Distractions', t.distractions, 'var(--txt)'],
     ['Distractions / hr', t.distractionsPerHour, t.distractionsPerHour > 4 ? 'var(--bad)' : 'var(--txt)'],
-    ['Active employees', t.activeEmployees, 'var(--txt)'],
+    ['Active members', t.activeEmployees, 'var(--txt)'],
   ].map(([label, val, color]) =>
     `<div class="card kpi"><b style="color:${color}">${val}</b><span>${label}</span></div>`).join('');
 
@@ -263,7 +264,7 @@ async function loadUsers() {
   const { users, seatsUsed, seatLimit } = await api('/api/admin/users');
   const sel = $('#userFilter');
   const cur = sel.value;
-  sel.innerHTML = '<option value="">All employees</option>' +
+  sel.innerHTML = '<option value="">All team members</option>' +
     users.filter((u) => u.active).map((u) => `<option value="${u.id}">${esc(u.name)}</option>`).join('');
   sel.value = cur;
 
@@ -274,7 +275,7 @@ async function loadUsers() {
   $('#userTable').querySelector('tbody').innerHTML = users.map((u) => `
     <tr>
       <td>${esc(u.name)}</td>
-      <td class="muted">${u.role}</td>
+      <td class="muted">${roleLabel(u.role)}</td>
       <td class="muted">${esc(u.team) || '—'}</td>
       <td>${u.active ? '<span class="pill good">active</span>' : '<span class="pill">disabled</span>'}</td>
       <td style="text-align:right;white-space:nowrap">

@@ -3,28 +3,59 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>FocusTrack — focus tracking for teams</title>
+<title>FocusTrack</title>
 <link rel="stylesheet" href="/style.css">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⏱️</text></svg>">
 <style>
-  body{display:flex;flex-direction:column;align-items:center;padding:34px 16px 60px}
-  .wrap{width:100%;max-width:480px}
+  body{display:flex;flex-direction:column;align-items:center;padding:38px 16px 60px}
+  .wrap{width:100%;max-width:440px}
   .hero{text-align:center;margin-bottom:26px}
-  .hero h1{font-size:30px;letter-spacing:-1px;margin-bottom:8px}
-  .hero p{color:var(--dim);font-size:15px;line-height:1.55;margin:0}
-  .feats{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:22px 0 6px}
-  .feat{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}
-  .feat b{display:block;font-size:13px;margin-bottom:4px}
-  .feat span{font-size:12px;color:var(--dim);line-height:1.45}
-  .slugline{display:flex;align-items:center;gap:0}
+  .hero h1{font-size:29px;letter-spacing:-1px;margin:16px 0 8px}
+  .hero p{color:var(--dim);font-size:15px;line-height:1.5;margin:0}
+
+  /* --- focus mark: a target that breathes, an arc that sweeps --- */
+  .mark{display:block;margin:0 auto}
+  .mark .sweep{
+    transform-origin:60px 60px;
+    animation:sweep 4s cubic-bezier(.45,0,.25,1) infinite;
+  }
+  .mark .dashring{
+    transform-origin:60px 60px;
+    animation:spin 22s linear infinite;
+  }
+  .mark .pulse{
+    transform-origin:60px 60px;
+    animation:pulse 4s ease-in-out infinite;
+  }
+  .mark .core{
+    transform-origin:60px 60px;
+    animation:core 4s ease-in-out infinite;
+  }
+  @keyframes sweep{
+    0%   {stroke-dashoffset:295; transform:rotate(-90deg)}
+    70%  {stroke-dashoffset:0;   transform:rotate(-90deg)}
+    100% {stroke-dashoffset:0;   transform:rotate(270deg)}
+  }
+  @keyframes spin{ to{transform:rotate(360deg)} }
+  @keyframes pulse{
+    0%,100%{transform:scale(1);   opacity:.30}
+    50%    {transform:scale(1.14);opacity:.06}
+  }
+  @keyframes core{
+    0%,100%{transform:scale(1)}
+    50%    {transform:scale(.78)}
+  }
+  @media (prefers-reduced-motion: reduce){
+    .mark .sweep,.mark .dashring,.mark .pulse,.mark .core{animation:none}
+  }
+
+  .slugline{display:flex;align-items:center}
   .slugline .pre{
     background:#0f1218;border:1px solid var(--line);border-right:none;color:var(--dim);
     padding:13px 0 13px 13px;border-radius:12px 0 0 12px;font-size:14px;white-space:nowrap
   }
   .slugline input{border-radius:0 12px 12px 0;border-left:none;padding-left:2px}
   .hint{font-size:12px;margin-top:7px;min-height:16px}
-  .foot{text-align:center;margin-top:22px;font-size:13px}
-  .foot a{color:var(--dim)}
   .done{text-align:center}
   .done .big{font-size:46px;margin-bottom:8px}
   .urlbox{
@@ -37,15 +68,18 @@
 <div class="wrap">
 
   <div class="hero">
-    <h1>FocusTrack</h1>
-    <p>Your team logs what they're working on, works in timed blocks, and taps one button when something pulls them away. You get to see where the day actually goes.</p>
-  </div>
+    <svg class="mark" width="120" height="120" viewBox="0 0 120 120" aria-hidden="true">
+      <circle class="pulse" cx="60" cy="60" r="52" fill="none" stroke="#4f9cf9" stroke-width="1.5"/>
+      <circle class="dashring" cx="60" cy="60" r="52" fill="none" stroke="#2f3a4d"
+              stroke-width="1.5" stroke-dasharray="2 9" stroke-linecap="round"/>
+      <circle cx="60" cy="60" r="47" fill="none" stroke="#262a34" stroke-width="6"/>
+      <circle class="sweep" cx="60" cy="60" r="47" fill="none" stroke="#4f9cf9" stroke-width="6"
+              stroke-linecap="round" stroke-dasharray="295"/>
+      <circle class="core" cx="60" cy="60" r="9" fill="#4f9cf9"/>
+    </svg>
 
-  <div class="feats">
-    <div class="feat"><b>Timed work blocks</b><span>15, 30, 45 or 60 minutes. 30 by default.</span></div>
-    <div class="feat"><b>One-tap distraction log</b><span>The timer keeps running — no punishment for honesty.</span></div>
-    <div class="feat"><b>Focus score</b><span>Completion rate and interruptions per hour, per person.</span></div>
-    <div class="feat"><b>Export anytime</b><span>Every session to CSV whenever you want it.</span></div>
+    <h1>FocusTrack</h1>
+    <p>See where your team's hours actually go.</p>
   </div>
 
   <!-- SIGNUP -->
@@ -65,7 +99,7 @@
       <span class="pre" id="origin">/</span>
       <input id="slug" placeholder="u2berclub" autocapitalize="none" autocomplete="off">
     </div>
-    <div class="hint muted" id="slugHint">This is the link your staff will open every day.</div>
+    <div class="hint muted" id="slugHint">Your team members will open this link every day.</div>
     <div class="gap"></div>
 
     <label>Your name (you'll be the admin)</label>
@@ -76,7 +110,7 @@
     <input id="pin" type="password" inputmode="numeric" placeholder="4+ digits">
     <div class="gap"></div>
 
-    <label>Email (so we can reach you)</label>
+    <label>Email</label>
     <input id="email" type="email" placeholder="you@company.com">
 
     <button class="btn" id="go">Create workspace</button>
@@ -98,11 +132,6 @@
       <button class="btn" id="openAdmin">Open my dashboard</button>
     </div>
   </div>
-
-  <div class="foot">
-    <span class="muted">Already have a workspace? Open your team link, or</span>
-    <a href="/master">master admin</a>
-  </div>
 </div>
 
 <script>
@@ -116,6 +145,9 @@ const api = async (p, o = {}) => {
 
 $('#origin').textContent = location.origin.replace(/^https?:\/\//, '') + '/';
 
+const slugify = (s) => String(s).toLowerCase().trim()
+  .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 32);
+
 // Suggest a link from the business name, until the user edits it themselves.
 let slugTouched = false;
 $('#slug').addEventListener('input', () => { slugTouched = true; checkSlug(); });
@@ -128,14 +160,11 @@ $('#code').addEventListener('input', (e) => {
   e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9-]/g, '');
 });
 
-const slugify = (s) => String(s).toLowerCase().trim()
-  .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 32);
-
 let checkTimer;
 function checkSlug() {
   clearTimeout(checkTimer);
   const v = slugify($('#slug').value);
-  if (!v) { setHint('This is the link your staff will open every day.', 'muted'); return; }
+  if (!v) { setHint('Your team members will open this link every day.', 'muted'); return; }
   checkTimer = setTimeout(async () => {
     try {
       const d = await api('/api/slug-available/' + encodeURIComponent(v));

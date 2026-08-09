@@ -492,7 +492,7 @@ app.get('/api/admin/export.csv', auth, businessAdmin, wrap((req, res) => {
 
   const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
   const lines = [[
-    'session_id', 'employee', 'team', 'date', 'start_time', 'end_time', 'task',
+    'session_id', 'team_member', 'team', 'date', 'start_time', 'end_time', 'task',
     'planned_minutes', 'actual_minutes', 'status', 'distraction_count', 'distraction_reasons',
   ].join(',')];
   for (const s of sessions) {
