@@ -268,6 +268,8 @@ async function loadOverview() {
           ${b.status !== 'active' ? `<button class="btn good sm" data-status="active" data-id="${b.id}">Approve</button>` : ''}
           ${b.status === 'active' ? `<button class="btn ghost sm" data-view="${b.id}">View as</button>` : ''}
           ${b.status !== 'suspended' ? `<button class="btn bad sm" data-status="suspended" data-id="${b.id}">Suspend</button>` : ''}
+          <button class="btn ghost sm" data-del="${b.id}" data-slug="${esc(b.slug)}"
+                  data-name="${esc(b.name)}" title="Permanently delete">Delete</button>
         </div>
       </td>
     </tr>`).join('');
@@ -275,7 +277,26 @@ async function loadOverview() {
 
 $('#bizTable').onclick = async (e) => {
   const id = e.target.dataset.id, status = e.target.dataset.status, view = e.target.dataset.view;
+  const del = e.target.dataset.del;
   try {
+    if (del) {
+      const slug = e.target.dataset.slug;
+      const name = e.target.dataset.name;
+      if (!confirm(
+        `Permanently delete "${name}"?\n\n` +
+        'This erases their team members, every session and every interruption they have ever logged. ' +
+        'It cannot be undone.\n\n' +
+        'If you only want to cut off access, use Suspend instead — that keeps the data.'
+      )) return;
+      const typed = prompt(`Type the team link to confirm:\n\n${slug}`);
+      if (typed === null) return;
+      const r = await api(`/api/master/businesses/${del}`, {
+        method: 'DELETE', body: JSON.stringify({ confirm: typed }),
+      });
+      alert(`Deleted. Removed ${r.deleted.users} people, ${r.deleted.sessions} sessions and ${r.deleted.distractions} interruptions.`);
+      loadOverview();
+      return;
+    }
     if (status) {
       const verb = status === 'active' ? 'approve' : 'suspend';
       if (status === 'suspended' && !confirm('Suspend this business? Everyone will be signed out immediately.')) return;

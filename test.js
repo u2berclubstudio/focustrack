@@ -224,6 +224,82 @@ const server = app.listen(0, async () => {
     assert.strictEqual((await call('/api/slug-available/brand-new-co')).body.available, true);
     ok('team link availability check works');
 
+    // A near-zero-length session with an interruption must not score perfectly.
+    const gameId = db.prepare(`INSERT INTO sessions (business_id,user_id,task,planned_minutes,started_at,ended_at,status,actual_seconds)
+                               VALUES (?,?,'Gamed',30,?,?,'completed',2)`)
+      .run(acmeBizId, raviJrId, iso(40), iso(40)).lastInsertRowid;
+    db.prepare(`INSERT INTO distractions (business_id,session_id,user_id,reason,category,occurred_at,elapsed_seconds)
+                VALUES (?,?,?,'Phone','phone',?,1)`).run(acmeBizId, gameId, raviJrId, iso(40));
+    const gamed = (await call('/api/admin/stats', {}, acme)).body.totals;
+    assert.strictEqual(gamed.sessions, 5);
+    assert.strictEqual(gamed.completed, 3, 'a 2-second session must not count as finished');
+    assert.ok(gamed.completionRate < 75, 'completion rate should fall, not rise');
+    assert.ok(gamed.focusScore < 80, 'gaming the timer must not improve the score');
+    ok('starting and instantly finishing a session cannot fake a good score');
+    db.prepare('DELETE FROM distractions WHERE session_id = ?').run(gameId);
+    db.prepare('DELETE FROM sessions WHERE id = ?').run(gameId);
+
+    // ---------- per-member plain-language stats ----------
+    const withStats = (await call('/api/admin/stats', {}, acme)).body.employees[0];
+    assert.strictEqual(withStats.sessions, 4);
+    assert.strictEqual(withStats.completed, 3);
+    assert.strictEqual(withStats.focusedMinutes, 120);
+    assert.strictEqual(withStats.avgSessionMinutes, 30);
+    assert.strictEqual(withStats.topDistraction.reason, 'Phone');
+    assert.strictEqual(withStats.topDistraction.count, 2);
+    assert.ok(withStats.daysActive >= 1);
+    ok('each member carries their own top interruption and averages');
+
+    // Their own reason, not the team's: give the other business a different one.
+    const globexBizId = db.prepare("SELECT id FROM businesses WHERE slug='globex'").get().id;
+    const globexUser = db.prepare('SELECT id FROM users WHERE business_id = ? LIMIT 1').get(globexBizId).id;
+    const gs = db.prepare(`INSERT INTO sessions (business_id,user_id,task,planned_minutes,started_at,ended_at,status,actual_seconds)
+                           VALUES (?,?,'G',30,?,?,'completed',1800)`)
+      .run(globexBizId, globexUser, iso(90), iso(60)).lastInsertRowid;
+    db.prepare(`INSERT INTO distractions (business_id,session_id,user_id,reason,category,occurred_at,elapsed_seconds)
+                VALUES (?,?,?,'Client walked in','people',?,600)`).run(globexBizId, gs, globexUser, iso(80));
+    const acmeAgain = (await call('/api/admin/stats', {}, acme)).body.employees[0];
+    assert.strictEqual(acmeAgain.topDistraction.reason, 'Phone');
+    ok('per-member interruption stays inside the right business');
+
+    // ---------- deleting a workspace ----------
+    assert.strictEqual((await call(`/api/master/businesses/${globexBizId}`,
+      { method: 'DELETE', body: JSON.stringify({ confirm: 'globex' }) }, acme)).status, 403);
+    ok('a business admin cannot delete a workspace');
+
+    const wrongConfirm = await call(`/api/master/businesses/${globexBizId}`,
+      { method: 'DELETE', body: JSON.stringify({ confirm: 'wrong' }) }, master);
+    assert.strictEqual(wrongConfirm.status, 400);
+    assert.ok(db.prepare('SELECT 1 FROM businesses WHERE id = ?').get(globexBizId));
+    ok('a mistyped confirmation deletes nothing');
+
+    const gone = await call(`/api/master/businesses/${globexBizId}`,
+      { method: 'DELETE', body: JSON.stringify({ confirm: 'GLOBEX' }) }, master);
+    assert.strictEqual(gone.status, 200);
+    assert.strictEqual(gone.body.deleted.sessions, 1);
+    ok('the confirmation is case-insensitive and reports what it removed');
+
+    for (const t of ['businesses', 'users', 'sessions', 'distractions']) {
+      const col = t === 'businesses' ? 'id' : 'business_id';
+      const left = db.prepare(`SELECT COUNT(*) c FROM ${t} WHERE ${col} = ?`).get(globexBizId).c;
+      assert.strictEqual(left, 0, `${t} still had rows`);
+    }
+    ok('deletion removes the business, its people, sessions and interruptions');
+
+    assert.strictEqual((await post('/api/login', { slug: 'globex', name: 'Priya', pin: '2222' })).status, 404);
+    ok('the deleted team link stops working');
+
+    // Acme is untouched by its neighbour being deleted.
+    assert.strictEqual((await call('/api/admin/stats', {}, acme)).body.totals.sessions, 4);
+    ok('deleting one business leaves the others intact');
+
+    assert.strictEqual((await call('/api/slug-available/globex')).body.available, true);
+    ok('the freed team link becomes available again');
+
+    const auditAfter = (await call('/api/master/audit', {}, master)).body.entries;
+    assert.ok(auditAfter.some((a) => a.action === 'business_deleted' && /globex/.test(a.detail)));
+    ok('deletion is written to the audit log with the row counts');
+
     console.log('\nAll checks passed.\n');
     server.close();
     process.exit(0);

@@ -31,27 +31,52 @@
 <style>
   body{padding:24px 18px 60px}
   .wrap{max-width:1120px;margin:0 auto}
-  .top{display:flex;flex-wrap:wrap;gap:12px;justify-content:space-between;align-items:center;margin-bottom:18px}
+  .top{display:flex;flex-wrap:wrap;gap:12px;justify-content:space-between;align-items:center;margin-bottom:16px}
   .controls{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
   .controls select,.controls input{width:auto;padding:9px 11px;font-size:14px}
+  .tabs{display:flex;gap:6px;margin-bottom:16px;flex-wrap:wrap}
+  .tab{background:transparent;border:1px solid var(--line);color:var(--dim);
+       border-radius:9px;padding:9px 16px;font-size:14px;font-weight:600}
+  .tab.on{background:var(--accent);border-color:var(--accent);color:#04101f}
+
+  /* --- headline --- */
+  .headline{font-size:19px;line-height:1.55;margin:0}
+  .headline b{color:var(--txt);font-weight:600}
+  .headline .hl{color:var(--accent)}
+
+  /* --- person cards --- */
+  .people{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:14px}
+  .person{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px}
+  .person .ph{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:14px}
+  .person .nm{font-size:17px;font-weight:600}
+  .person .dept{font-size:12px;color:var(--dim);margin-top:2px}
+  .verdict{font-size:13px;font-weight:600;border-radius:8px;padding:5px 11px;white-space:nowrap}
+  .meter{height:8px;border-radius:5px;background:#0f1218;overflow:hidden;margin-bottom:16px}
+  .meter i{display:block;height:100%;border-radius:5px}
+  .facts{font-size:14px;line-height:1.75}
+  .facts div{display:flex;gap:9px;align-items:flex-start}
+  .facts .ic{width:17px;flex:none;text-align:center;color:var(--dim);font-size:13px;line-height:1.75}
+  .facts b{font-weight:600}
+  .nodata{color:var(--dim);font-size:14px}
+
+  /* --- details tab --- */
   .grid{display:grid;gap:14px}
   .kpis{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
-  .cols{grid-template-columns:1.35fr 1fr;align-items:start}
-  @media(max-width:860px){.cols{grid-template-columns:1fr}}
+  .cols3{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px}
   .kpi b{display:block;font-size:30px;letter-spacing:-1px;line-height:1.15}
   .kpi span{font-size:12px;color:var(--dim)}
-  .score{display:inline-block;min-width:44px;text-align:center;border-radius:7px;padding:4px 8px;font-weight:700;font-size:13px}
   .bar{height:9px;border-radius:5px;background:var(--accent);min-width:3px;display:block}
   .barrow{display:flex;align-items:center;gap:10px;padding:7px 0;font-size:13px}
   .barrow .lbl{width:44%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dim)}
   .barrow .val{width:36px;text-align:right;color:var(--dim);font-size:12px}
-  .cols3{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px}
   .hbars{display:flex;align-items:flex-end;gap:5px;height:130px;margin-top:6px}
   .hbars .h{flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:5px}
   .hbars .h i{width:100%;background:var(--accent);border-radius:4px 4px 0 0;display:block;min-height:2px}
   .hbars .h small{font-size:10px;color:var(--dim)}
   .feed .f{padding:9px 0;border-bottom:1px solid var(--line);font-size:13px;display:flex;justify-content:space-between;gap:10px}
   .feed .f:last-child{border-bottom:none}
+
+  /* --- team tab --- */
   .userrow{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px}
   .userrow input,.userrow select{width:auto;padding:10px 12px;font-size:14px}
   .seats{font-size:12px;color:var(--dim);margin-left:auto}
@@ -78,74 +103,85 @@
       </select>
       <input type="date" id="from" class="hidden">
       <input type="date" id="to" class="hidden">
-      <select id="userFilter"><option value="">All team members</option></select>
-      <button class="btn sm" id="refresh">Refresh</button>
-      <a class="linkbtn" id="csv" href="#">Export CSV</a>
+      <a class="linkbtn" id="csv" href="#">Download data</a>
       <a class="linkbtn" id="timerLink" href="#">My timer</a>
       <a class="linkbtn" href="#" id="signout">Sign out</a>
     </div>
   </div>
 
-  <div class="grid kpis" id="kpis"></div>
+  <div class="tabs">
+    <button class="tab on" data-tab="overview">Overview</button>
+    <button class="tab" data-tab="details">Details</button>
+    <button class="tab" data-tab="team">Team</button>
+  </div>
 
-  <div class="gap"></div>
-  <div class="grid cols">
+  <!-- ================= OVERVIEW ================= -->
+  <div id="tab-overview">
     <div class="card">
-      <h2>TEAM MEMBERS</h2>
-      <table id="empTable">
-        <thead><tr>
-          <th>Name</th><th>Focus score</th><th>Sessions</th><th>Completed</th>
-          <th>Focus time</th><th>Distr./hr</th>
-        </tr></thead>
+      <p class="headline" id="headline">Loading…</p>
+    </div>
+    <div class="people" id="people"></div>
+    <p class="muted" style="font-size:12px;margin-top:16px;line-height:1.6" id="scoreNote"></p>
+  </div>
+
+  <!-- ================= DETAILS ================= -->
+  <div id="tab-details" class="hidden">
+    <div class="controls" style="margin-bottom:14px">
+      <select id="userFilter"><option value="">All team members</option></select>
+    </div>
+
+    <div class="grid kpis" id="kpis"></div>
+
+    <div class="gap"></div>
+    <div class="cols3">
+      <div class="card">
+        <h2>WHAT PULLS PEOPLE AWAY</h2>
+        <div id="reasons"></div>
+      </div>
+      <div class="card">
+        <h2>BY CATEGORY</h2>
+        <div id="cats"></div>
+      </div>
+      <div class="card feed">
+        <h2>LATEST INTERRUPTIONS</h2>
+        <div id="feed"></div>
+      </div>
+    </div>
+
+    <div class="gap"></div>
+    <div class="cols3">
+      <div class="card">
+        <h2>BEST HOURS OF THE DAY</h2>
+        <div class="hbars" id="hours"></div>
+        <div class="muted" style="font-size:12px;margin-top:10px" id="hoursNote"></div>
+      </div>
+      <div class="card">
+        <h2>FOCUS MINUTES PER DAY</h2>
+        <div class="hbars" id="daily"></div>
+        <div class="muted" style="font-size:12px;margin-top:10px" id="dailyNote"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= TEAM ================= -->
+  <div id="tab-team" class="hidden">
+    <div class="card">
+      <h2>ADD A TEAM MEMBER</h2>
+      <div class="userrow">
+        <input type="text" id="nName" placeholder="Name">
+        <input type="password" id="nPin" placeholder="PIN (4+ digits)">
+        <input type="text" id="nTeam" placeholder="Department (optional)">
+        <select id="nRole"><option value="employee">Team member</option><option value="admin">Admin</option></select>
+        <button class="btn sm" id="addUser">Add</button>
+        <span class="err" id="userErr" style="margin:0"></span>
+        <span class="seats" id="seats"></span>
+      </div>
+      <table id="userTable">
+        <thead><tr><th>Name</th><th>Role</th><th>Department</th><th>Status</th><th></th></tr></thead>
         <tbody></tbody>
       </table>
-      <div class="empty hidden" id="empEmpty">No sessions from your team in this range.</div>
+      <div class="muted" style="font-size:12px;margin-top:14px" id="staffLink"></div>
     </div>
-
-    <div class="card">
-      <h2>TOP DISTRACTIONS</h2>
-      <div id="reasons"></div>
-      <div style="height:18px"></div>
-      <h2>BY CATEGORY</h2>
-      <div id="cats"></div>
-    </div>
-  </div>
-
-  <div class="gap"></div>
-  <div class="cols3">
-    <div class="card">
-      <h2>BEST HOURS OF THE DAY</h2>
-      <div class="hbars" id="hours"></div>
-      <div class="muted" style="font-size:12px;margin-top:10px" id="hoursNote"></div>
-    </div>
-    <div class="card">
-      <h2>DAILY FOCUS MINUTES</h2>
-      <div class="hbars" id="daily"></div>
-      <div class="muted" style="font-size:12px;margin-top:10px" id="dailyNote"></div>
-    </div>
-    <div class="card feed">
-      <h2>LATEST DISTRACTIONS</h2>
-      <div id="feed"></div>
-    </div>
-  </div>
-
-  <div class="gap"></div>
-  <div class="card">
-    <h2>YOUR TEAM MEMBERS</h2>
-    <div class="userrow">
-      <input type="text" id="nName" placeholder="Name">
-      <input type="password" id="nPin" placeholder="PIN (4+ digits)">
-      <input type="text" id="nTeam" placeholder="Department (optional)">
-      <select id="nRole"><option value="employee">Team member</option><option value="admin">Admin</option></select>
-      <button class="btn sm" id="addUser">Add</button>
-      <span class="err" id="userErr" style="margin:0"></span>
-      <span class="seats" id="seats"></span>
-    </div>
-    <table id="userTable">
-      <thead><tr><th>Name</th><th>Role</th><th>Department</th><th>Status</th><th></th></tr></thead>
-      <tbody></tbody>
-    </table>
-    <div class="muted" style="font-size:12px;margin-top:14px" id="staffLink"></div>
   </div>
 </div>
 
@@ -164,10 +200,44 @@ const api = async (p, o = {}) => {
   return d;
 };
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-const scoreColor = (v) => v >= 80 ? 'var(--good)' : v >= 60 ? 'var(--warn)' : 'var(--bad)';
 const roleLabel = (r) => ({ owner: 'Owner', admin: 'Admin', employee: 'Team member' }[r] || r);
-const fmtMin = (m) => m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`;
 
+// ---------- plain-language helpers ----------
+const fmtMin = (m) => {
+  if (m < 60) return `${m} min`;
+  const h = Math.floor(m / 60), r = m % 60;
+  return r ? `${h}h ${r}m` : `${h}h`;
+};
+const hourWord = (h) => {
+  if (h === null || h === undefined) return null;
+  const ampm = h < 12 ? 'am' : 'pm';
+  const hr = h % 12 === 0 ? 12 : h % 12;
+  return `${hr}${ampm}`;
+};
+
+// Four bands, described the way a manager would say it out loud.
+function verdict(score) {
+  if (score >= 85) return { word: 'Deeply focused', color: 'var(--good)' };
+  if (score >= 70) return { word: 'Focused',        color: 'var(--good)' };
+  if (score >= 55) return { word: 'Often pulled away', color: 'var(--warn)' };
+  return { word: 'Struggling to focus', color: 'var(--bad)' };
+}
+
+function interruptionSentence(dph) {
+  if (!dph) return 'Never stopped once';
+  if (dph < 0.6) return 'Rarely stopped';
+  const mins = Math.round(60 / dph);
+  if (mins >= 55) return 'Stopped about once an hour';
+  return `Stopped about every ${mins} min`;
+}
+
+function finishSentence(completed, total) {
+  if (!total) return 'No sessions yet';
+  if (completed === total) return `Finished all ${total} sessions`;
+  return `Finished ${completed} of ${total} sessions`;
+}
+
+// ---------- range + tabs ----------
 $('#timerLink').href = '/' + SLUG;
 $('#signout').onclick = async (e) => {
   e.preventDefault();
@@ -199,7 +269,16 @@ $('#preset').onchange = () => {
 };
 $('#from').onchange = $('#to').onchange = load;
 $('#userFilter').onchange = load;
-$('#refresh').onclick = load;
+
+document.querySelector('.tabs').onclick = (e) => {
+  const t = e.target.closest('.tab');
+  if (!t) return;
+  document.querySelectorAll('.tab').forEach((x) => x.classList.toggle('on', x === t));
+  for (const n of ['overview', 'details', 'team']) {
+    $('#tab-' + n).classList.toggle('hidden', n !== t.dataset.tab);
+  }
+};
+
 $('#csv').onclick = async (e) => {
   e.preventDefault();
   const r = await fetch(`/api/admin/export.csv?${qs()}`, { headers: { Authorization: 'Bearer ' + token } });
@@ -209,6 +288,63 @@ $('#csv').onclick = async (e) => {
   a.click();
 };
 
+// ---------- overview ----------
+function renderHeadline(d) {
+  const t = d.totals;
+  if (!t.sessions) {
+    $('#headline').innerHTML =
+      'Nobody has run a focus session in this period yet. Once your team starts using the timer, this page will tell you how their days are going.';
+    $('#scoreNote').textContent = '';
+    return;
+  }
+  const outOfTen = Math.round((t.completed / t.sessions) * 10);
+  const top = d.topReasons[0];
+  const pieces = [
+    `Your team put in <b>${fmtMin(Math.round(t.focusedHours * 60))}</b> of focused work across <b>${t.sessions} sessions</b>.`,
+    `<b>${outOfTen} out of every 10</b> sessions get finished.`,
+    top ? `The thing that pulls people away most is <span class="hl">${esc(top.reason)}</span>.` : 'Nothing has interrupted them yet.',
+  ];
+  $('#headline').innerHTML = pieces.join(' ');
+  $('#scoreNote').textContent =
+    'The score on each card combines two things: how often someone finishes what they start, and how often they get pulled away. 70 and above is healthy.';
+}
+
+function renderPeople(d) {
+  const el = $('#people');
+  if (!d.employees.length) { el.innerHTML = ''; return; }
+
+  el.innerHTML = d.employees.map((e) => {
+    const v = verdict(e.focusScore);
+    const facts = [];
+    facts.push(['✓', finishSentence(e.completed, e.sessions)]);
+    facts.push(['⏱', `<b>${fmtMin(e.focusedMinutes)}</b> of focused work` +
+      (e.daysActive > 1 ? ` over ${e.daysActive} days` : '')]);
+    facts.push(['⚡', interruptionSentence(e.distractionsPerHour)]);
+    if (e.topDistraction) {
+      facts.push(['📵', `Usually pulled away by <b>${esc(e.topDistraction.reason)}</b>`]);
+    }
+    if (e.bestHour !== null && e.bestHour !== undefined) {
+      facts.push(['🌤', `Does best work around <b>${hourWord(e.bestHour)}</b>`]);
+    }
+
+    return `
+      <div class="person">
+        <div class="ph">
+          <div>
+            <div class="nm">${esc(e.name)}</div>
+            ${e.team ? `<div class="dept">${esc(e.team)}</div>` : ''}
+          </div>
+          <span class="verdict" style="background:${v.color}1f;color:${v.color}">${v.word}</span>
+        </div>
+        <div class="meter"><i style="width:${Math.max(3, e.focusScore)}%;background:${v.color}"></i></div>
+        <div class="facts">
+          ${facts.map(([ic, txt]) => `<div><span class="ic">${ic}</span><span>${txt}</span></div>`).join('')}
+        </div>
+      </div>`;
+  }).join('');
+}
+
+// ---------- details ----------
 function barList(el, items, labelKey, valueKey, color) {
   if (!items.length) { el.innerHTML = '<div class="empty">Nothing logged 🎉</div>'; return; }
   const max = Math.max(...items.map((i) => i[valueKey]));
@@ -230,34 +366,15 @@ function colBars(el, items, valueKey, labelFn, color) {
     </div>`).join('');
 }
 
-async function load() {
-  const d = await api(`/api/admin/stats?${qs()}`);
-  $('#bizName').textContent = d.business.name;
-  document.title = d.business.name + ' · FocusTrack';
-  $('#rangeLabel').textContent = `${d.range.from} → ${d.range.to}`;
+function renderDetails(d) {
   const t = d.totals;
-
   $('#kpis').innerHTML = [
-    ['Team focus score', t.focusScore === null ? '—' : t.focusScore, scoreColor(t.focusScore ?? 0)],
-    ['Sessions', t.sessions, 'var(--txt)'],
-    ['Completion rate', t.sessions ? t.completionRate + '%' : '—', 'var(--txt)'],
-    ['Focused hours', t.focusedHours, 'var(--txt)'],
-    ['Distractions', t.distractions, 'var(--txt)'],
-    ['Distractions / hr', t.distractionsPerHour, t.distractionsPerHour > 4 ? 'var(--bad)' : 'var(--txt)'],
-    ['Active members', t.activeEmployees, 'var(--txt)'],
-  ].map(([label, val, color]) =>
-    `<div class="card kpi"><b style="color:${color}">${val}</b><span>${label}</span></div>`).join('');
-
-  $('#empEmpty').classList.toggle('hidden', d.employees.length > 0);
-  $('#empTable').querySelector('tbody').innerHTML = d.employees.map((e) => `
-    <tr>
-      <td>${esc(e.name)} ${e.team ? `<span class="pill">${esc(e.team)}</span>` : ''}</td>
-      <td><span class="score" style="background:${scoreColor(e.focusScore)}22;color:${scoreColor(e.focusScore)}">${e.focusScore}</span></td>
-      <td>${e.sessions}</td>
-      <td>${e.completed} <span class="muted">(${e.completionRate}%)</span></td>
-      <td>${fmtMin(e.focusedMinutes)}</td>
-      <td>${e.distractionsPerHour}</td>
-    </tr>`).join('');
+    ['Sessions started', t.sessions],
+    ['Sessions finished', t.completed],
+    ['Hours of focus', t.focusedHours],
+    ['Times interrupted', t.distractions],
+    ['People active', t.activeEmployees],
+  ].map(([label, val]) => `<div class="card kpi"><b>${val}</b><span>${label}</span></div>`).join('');
 
   barList($('#reasons'), d.topReasons, 'reason', 'count', 'var(--warn)');
   barList($('#cats'), d.categories, 'category', 'count', 'var(--accent)');
@@ -265,13 +382,13 @@ async function load() {
   colBars($('#hours'), d.hours, 'focusedMinutes', (h) => String(h.hour).padStart(2, '0'), 'var(--accent)');
   const best = [...d.hours].sort((a, b) => (b.completed / (b.sessions || 1)) - (a.completed / (a.sessions || 1)))[0];
   $('#hoursNote').textContent = best
-    ? `Best completion rate at ${String(best.hour).padStart(2, '0')}:00 — ${Math.round((best.completed / best.sessions) * 100)}% of sessions finished.`
+    ? `Most sessions get finished around ${hourWord(best.hour)}.`
     : '';
 
   colBars($('#daily'), d.daily, 'focusedMinutes', (x) => x.date.slice(5), 'var(--good)');
   const days = d.daily.length || 1;
   $('#dailyNote').textContent =
-    `Average ${Math.round(d.daily.reduce((a, x) => a + x.focusedMinutes, 0) / days)} focus min/day across the team.`;
+    `The team averages ${fmtMin(Math.round(d.daily.reduce((a, x) => a + x.focusedMinutes, 0) / days))} of focus per day.`;
 
   $('#feed').innerHTML = d.recentDistractions.length
     ? d.recentDistractions.map((f) => `
@@ -279,9 +396,20 @@ async function load() {
           <span>${esc(f.reason)}</span>
           <span class="muted" style="white-space:nowrap">${esc(f.user.split(' ')[0])} · ${new Date(f.at).toLocaleString([], { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
         </div>`).join('')
-    : '<div class="empty">No distractions logged 🎉</div>';
+    : '<div class="empty">No interruptions logged 🎉</div>';
 }
 
+async function load() {
+  const d = await api(`/api/admin/stats?${qs()}`);
+  $('#bizName').textContent = d.business.name;
+  document.title = d.business.name + ' · FocusTrack';
+  $('#rangeLabel').textContent = `${d.range.from} → ${d.range.to}`;
+  renderHeadline(d);
+  renderPeople(d);
+  renderDetails(d);
+}
+
+// ---------- team ----------
 async function loadUsers() {
   const { users, seatsUsed, seatLimit } = await api('/api/admin/users');
   const sel = $('#userFilter');
@@ -308,7 +436,7 @@ async function loadUsers() {
     </tr>`).join('');
 
   $('#staffLink').innerHTML =
-    `Staff sign in at <code class="mono">${location.origin}/${SLUG}</code> using their name and PIN.`;
+    `Your team signs in at <code class="mono">${location.origin}/${SLUG}</code> with their name and PIN.`;
 }
 
 $('#userTable').onclick = async (e) => {

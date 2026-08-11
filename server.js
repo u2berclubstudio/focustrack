@@ -353,13 +353,24 @@ app.get('/api/my/today', auth, wrap((req, res) => {
 
 // -------------------------------------------------------- business admin
 
+// Tapping "Done early" two seconds in isn't a finished focus session. Anything
+// under two minutes is treated as abandoned for analytics, while the raw status
+// is left untouched in the CSV so the underlying record stays honest.
+const MIN_REAL_SECONDS = 120;
+const didFinish = (s) => s.status === 'completed' && (s.actual_seconds || 0) >= MIN_REAL_SECONDS;
+
 function scoreFor(sessions, distractionCount) {
   const total = sessions.length;
   if (!total) return { focusScore: null, completionRate: 0, distractionsPerHour: 0 };
-  const completed = sessions.filter((s) => s.status === 'completed').length;
-  const hours = sessions.reduce((a, s) => a + (s.actual_seconds || 0), 0) / 3600;
+  const completed = sessions.filter(didFinish).length;
+  const seconds = sessions.reduce((a, s) => a + (s.actual_seconds || 0), 0);
   const completionRate = completed / total;
-  const dph = hours > 0 ? distractionCount / hours : 0;
+
+  // Floor each session at a minute before dividing. Otherwise someone who
+  // starts a block, logs an interruption and immediately taps "Done early"
+  // divides by ~zero hours and comes out looking flawless.
+  const hours = Math.max(seconds, total * 60) / 3600;
+  const dph = hours > 0 ? Math.min(distractionCount / hours, 20) : 0;
   return {
     focusScore: Math.max(0, Math.round(0.6 * completionRate * 100 + 0.4 * Math.max(0, 100 - 12.5 * dph))),
     completionRate: Math.round(completionRate * 100),
@@ -411,15 +422,53 @@ app.get('/api/admin/stats', auth, businessAdmin, wrap((req, res) => {
     byUser[s.user_id].sessions.push(s);
     byUser[s.user_id].distractions += s.distractions;
   }
+
+  // Per-person interruption reasons, so each card can name their own worst one
+  // rather than the team's.
+  const reasonsByUser = {};
+  for (const d of allDistractions) {
+    (reasonsByUser[d.user_id] ||= {});
+    const key = d.reason.trim();
+    reasonsByUser[d.user_id][key] = (reasonsByUser[d.user_id][key] || 0) + 1;
+  }
+  const topOf = (obj) => {
+    const list = Object.entries(obj || {}).sort((a, b) => b[1] - a[1]);
+    return list.length ? { reason: list[0][0], count: list[0][1] } : null;
+  };
+
+  // The hour where this person completes the highest share of what they start.
+  function bestHourFor(list) {
+    const buckets = {};
+    for (const s of list) {
+      const h = localHour(s.started_at, tz);
+      buckets[h] ||= { hour: h, started: 0, completed: 0 };
+      buckets[h].started++;
+      if (didFinish(s)) buckets[h].completed++;
+    }
+    const ranked = Object.values(buckets)
+      .filter((b) => b.started >= 2)
+      .sort((a, b) => (b.completed / b.started) - (a.completed / a.started) || b.started - a.started);
+    return ranked.length ? ranked[0].hour : null;
+  }
+
   const employees = Object.values(byUser)
-    .map((u) => ({
-      user_id: u.user_id, name: u.name, team: u.team,
-      sessions: u.sessions.length,
-      completed: u.sessions.filter((s) => s.status === 'completed').length,
-      focusedMinutes: Math.round(u.sessions.reduce((a, s) => a + (s.actual_seconds || 0), 0) / 60),
-      distractions: u.distractions,
-      ...scoreFor(u.sessions, u.distractions),
-    }))
+    .map((u) => {
+      const days = new Set(u.sessions.map((s) => localDate(s.started_at, tz)));
+      const focusedMinutes = Math.round(u.sessions.reduce((a, s) => a + (s.actual_seconds || 0), 0) / 60);
+      return {
+        user_id: u.user_id, name: u.name, team: u.team,
+        sessions: u.sessions.length,
+        completed: u.sessions.filter(didFinish).length,
+        focusedMinutes,
+        distractions: u.distractions,
+        daysActive: days.size,
+        avgMinutesPerDay: days.size ? Math.round(focusedMinutes / days.size) : 0,
+        avgSessionMinutes: u.sessions.length ? Math.round(focusedMinutes / u.sessions.length) : 0,
+        topDistraction: topOf(reasonsByUser[u.user_id]),
+        bestHour: bestHourFor(u.sessions),
+        ...scoreFor(u.sessions, u.distractions),
+      };
+    })
     .sort((a, b) => b.focusScore - a.focusScore);
 
   const reasonCounts = {}, categoryCounts = {};
@@ -439,13 +488,13 @@ app.get('/api/admin/stats', auth, businessAdmin, wrap((req, res) => {
   const dayMap = {};
   for (const s of sessions) {
     const h = hours[localHour(s.started_at, tz)];
-    h.sessions++; if (s.status === 'completed') h.completed++;
+    h.sessions++; if (didFinish(s)) h.completed++;
     h.distractions += s.distractions;
     h.focusedMinutes += Math.round((s.actual_seconds || 0) / 60);
 
     const d = localDate(s.started_at, tz);
     dayMap[d] ||= { date: d, sessions: 0, completed: 0, distractions: 0, focusedMinutes: 0 };
-    dayMap[d].sessions++; if (s.status === 'completed') dayMap[d].completed++;
+    dayMap[d].sessions++; if (didFinish(s)) dayMap[d].completed++;
     dayMap[d].distractions += s.distractions;
     dayMap[d].focusedMinutes += Math.round((s.actual_seconds || 0) / 60);
   }
@@ -460,7 +509,7 @@ app.get('/api/admin/stats', auth, businessAdmin, wrap((req, res) => {
                 seatsUsed, seatLimit: req.business.seat_limit },
     totals: {
       sessions: sessions.length,
-      completed: sessions.filter((s) => s.status === 'completed').length,
+      completed: sessions.filter(didFinish).length,
       focusedHours: Math.round(sessions.reduce((a, s) => a + (s.actual_seconds || 0), 0) / 360) / 10,
       distractions: totalDistractions,
       activeEmployees: employees.length,
@@ -703,6 +752,36 @@ app.patch('/api/master/businesses/:id', auth, masterOnly, wrap((req, res) => {
       .run(Number(req.body.tz_offset), biz.id);
   }
   res.json({ ok: true });
+}));
+
+app.delete('/api/master/businesses/:id', auth, masterOnly, wrap((req, res) => {
+  const biz = db.prepare('SELECT * FROM businesses WHERE id = ?').get(req.params.id);
+  if (!biz) return res.status(404).json({ error: 'Not found' });
+
+  // Typing the team link is the only guard against a mis-click wiping a
+  // customer's history — there is no undo beyond your nightly backup.
+  if (String(req.body.confirm || '').trim().toLowerCase() !== biz.slug) {
+    return res.status(400).json({ error: `Type "${biz.slug}" exactly to confirm deletion` });
+  }
+
+  const counts = {
+    users: db.prepare('SELECT COUNT(*) c FROM users WHERE business_id = ?').get(biz.id).c,
+    sessions: db.prepare('SELECT COUNT(*) c FROM sessions WHERE business_id = ?').get(biz.id).c,
+    distractions: db.prepare('SELECT COUNT(*) c FROM distractions WHERE business_id = ?').get(biz.id).c,
+  };
+
+  // Explicit deletes rather than relying on cascade, so this still holds if
+  // foreign keys are ever off on a given SQLite build.
+  db.prepare('DELETE FROM tokens WHERE user_id IN (SELECT id FROM users WHERE business_id = ?)').run(biz.id);
+  db.prepare('DELETE FROM distractions WHERE business_id = ?').run(biz.id);
+  db.prepare('DELETE FROM sessions WHERE business_id = ?').run(biz.id);
+  db.prepare('DELETE FROM users WHERE business_id = ?').run(biz.id);
+  db.prepare('UPDATE invite_codes SET used_by = NULL WHERE used_by = ?').run(biz.id);
+  db.prepare('DELETE FROM businesses WHERE id = ?').run(biz.id);
+
+  audit(req.user.name, 'business_deleted',
+    `${biz.name} (${biz.slug}) — ${counts.users} users, ${counts.sessions} sessions, ${counts.distractions} distractions`);
+  res.json({ ok: true, deleted: counts });
 }));
 
 app.post('/api/master/businesses/:id/impersonate', auth, masterOnly, wrap((req, res) => {
