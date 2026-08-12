@@ -169,7 +169,7 @@
       <h2>ADD A TEAM MEMBER</h2>
       <div class="userrow">
         <input type="text" id="nName" placeholder="Name">
-        <input type="password" id="nPin" placeholder="PIN (4+ digits)">
+        <input type="password" id="nPin" placeholder="PIN (6 digits)" maxlength="12">
         <input type="text" id="nTeam" placeholder="Department (optional)">
         <select id="nRole"><option value="employee">Team member</option><option value="admin">Admin</option></select>
         <button class="btn sm" id="addUser">Add</button>
@@ -181,6 +181,17 @@
         <tbody></tbody>
       </table>
       <div class="muted" style="font-size:12px;margin-top:14px" id="staffLink"></div>
+    </div>
+
+    <div class="card">
+      <h2>SECURITY</h2>
+      <div class="muted" style="font-size:13px;line-height:1.6;margin-bottom:14px">
+        Signing everyone out ends every logged-in device for your whole team, including
+        phones. Useful if someone leaves or a device goes missing — everyone simply signs
+        in again with their PIN.
+      </div>
+      <button class="btn bad sm" id="logoutAll">Sign everyone out</button>
+      <span class="ok" id="logoutAllMsg" style="margin-left:10px"></span>
     </div>
   </div>
 </div>
@@ -455,6 +466,14 @@ $('#userTable').onclick = async (e) => {
       loadUsers();
     }
   } catch (err) { alert(err.message); }
+};
+
+$('#logoutAll').onclick = async () => {
+  if (!confirm('Sign every team member out of every device? They will need to sign in again.')) return;
+  try {
+    const r = await api('/api/admin/logout-all', { method: 'POST' });
+    $('#logoutAllMsg').textContent = `Done — ended ${r.endedSessions} sign-ins.`;
+  } catch (e) { alert(e.message); }
 };
 
 $('#addUser').onclick = async () => {

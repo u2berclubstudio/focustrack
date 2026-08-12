@@ -129,7 +129,8 @@
     <div class="gap"></div>
 
     <label>Choose your PIN</label>
-    <input id="pin" type="password" inputmode="numeric" placeholder="4+ digits">
+    <input id="pin" type="password" inputmode="numeric" placeholder="6 digits" maxlength="12">
+    <div class="hint muted" id="pinHint">Not 123456, and not the same digit repeated.</div>
     <div class="gap"></div>
 
     <label>Email</label>
@@ -180,6 +181,7 @@ $('#bizName').addEventListener('input', () => {
 });
 $('#code').addEventListener('input', (e) => {
   e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9-]/g, '');
+  if ($('#slug').value) checkSlug();
 });
 
 let checkTimer;
@@ -187,11 +189,15 @@ function checkSlug() {
   clearTimeout(checkTimer);
   const v = slugify($('#slug').value);
   if (!v) { setHint('Your team members will open this link every day.', 'muted'); return; }
+  if (!$('#code').value.trim()) { setHint('Enter your invite code first.', 'muted'); return; }
   checkTimer = setTimeout(async () => {
     try {
-      const d = await api('/api/slug-available/' + encodeURIComponent(v));
+      const d = await api('/api/slug-check', {
+        method: 'POST',
+        body: JSON.stringify({ code: $('#code').value, slug: v }),
+      });
       setHint(d.available ? `${v} is available` : d.reason, d.available ? 'ok' : 'bad');
-    } catch { /* ignore */ }
+    } catch (e) { setHint(e.message, 'bad'); }
   }, 300);
 }
 function setHint(text, kind) {

@@ -59,6 +59,37 @@ function verifyPin(pin, stored) {
 
 const nowISO = () => new Date().toISOString();
 
+// --- PIN policy ----------------------------------------------------------
+// Applies to PINs being *set*. Existing hashes are never re-validated, so
+// nobody already using a 4-digit PIN is locked out by this.
+const MIN_PIN = Number(process.env.MIN_PIN_LENGTH || 6);
+
+const COMMON_PINS = new Set([
+  '000000', '111111', '121212', '112233', '123123', '123321', '654321',
+  '666666', '696969', '123456', '654312', '159753', '147258', '102030',
+  '999999', '888888', '777777', '098765', '011235', '520520',
+  '1234', '1111', '0000', '1212', '7777', '1004', '2000', '4444', '2222',
+]);
+
+function pinProblem(pin) {
+  const p = String(pin || '').trim();
+  if (!/^\d+$/.test(p)) return 'Your PIN should be numbers only';
+  if (p.length < MIN_PIN) return `Your PIN needs at least ${MIN_PIN} digits`;
+  if (p.length > 12) return 'That PIN is too long';
+  if (COMMON_PINS.has(p)) return 'That PIN is one of the most guessed — pick another';
+  if (/^(\d)\1+$/.test(p)) return 'Do not repeat the same digit';
+
+  // 123456 / 987654 and friends
+  let up = true, down = true;
+  for (let i = 1; i < p.length; i++) {
+    const step = Number(p[i]) - Number(p[i - 1]);
+    if (step !== 1) up = false;
+    if (step !== -1) down = false;
+  }
+  if (up || down) return 'Avoid straight sequences like 123456';
+  return null;
+}
+
 const columns = (table) => {
   try {
     return db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
@@ -185,12 +216,34 @@ CREATE TABLE IF NOT EXISTS tokens (
 );
 `);
 
+// --- login security -------------------------------------------------------
+db.exec(`
+CREATE TABLE IF NOT EXISTS login_guard (
+  key            TEXT PRIMARY KEY,   -- 'user:<biz>:<name>' or 'ip:<addr>'
+  fails          INTEGER NOT NULL DEFAULT 0,
+  first_fail_at  TEXT,
+  locked_until   TEXT
+);
+
+CREATE TABLE IF NOT EXISTS otp_challenges (
+  id          TEXT PRIMARY KEY,
+  user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  code_hash   TEXT NOT NULL,
+  attempts    INTEGER NOT NULL DEFAULT 0,
+  created_at  TEXT NOT NULL,
+  expires_at  TEXT NOT NULL,
+  used_at     TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_otp_user ON otp_challenges(user_id);
+`);
+
 // Add columns that older installs won't have yet.
 const addColumn = (table, col, decl) => {
   if (tableExists(table) && !columns(table).includes(col)) {
     db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${decl}`);
   }
 };
+addColumn('users', 'email', "TEXT DEFAULT ''");
 addColumn('sessions', 'business_id', 'INTEGER');
 addColumn('distractions', 'business_id', 'INTEGER');
 addColumn('tokens', 'impersonated_by', 'TEXT DEFAULT NULL');
@@ -237,4 +290,7 @@ function migrateOrphans() {
 }
 migrateOrphans();
 
-module.exports = { db, hashPin, verifyPin, nowISO, DATA_DIR, tableExists, columns };
+module.exports = {
+  db, hashPin, verifyPin, nowISO, DATA_DIR, tableExists, columns,
+  pinProblem, MIN_PIN,
+};

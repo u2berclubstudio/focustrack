@@ -60,7 +60,7 @@
 </head>
 <body>
 
-<!-- LOGIN -->
+<!-- LOGIN: STEP 1 -->
 <div class="loginwrap" id="loginView">
   <h1>Master Admin</h1>
   <p class="sub">Platform control panel</p>
@@ -70,8 +70,27 @@
     <div class="gap"></div>
     <label>PIN</label>
     <input id="lPin" type="password" inputmode="numeric" autocomplete="current-password">
-    <button class="btn" id="loginBtn">Sign in</button>
+    <button class="btn" id="loginBtn">Continue</button>
     <div class="err" id="loginErr"></div>
+  </div>
+</div>
+
+<!-- LOGIN: STEP 2 -->
+<div class="loginwrap hidden" id="otpView">
+  <h1>Check your email</h1>
+  <p class="sub" id="otpSub">We sent a 6-digit code.</p>
+  <div class="card">
+    <label>Sign-in code</label>
+    <input id="otpCode" inputmode="numeric" autocomplete="one-time-code"
+           maxlength="6" placeholder="000000"
+           style="letter-spacing:8px;text-align:center;font-size:22px">
+    <button class="btn" id="otpBtn">Sign in</button>
+    <button class="btn ghost" id="otpBack">Start again</button>
+    <div class="err" id="otpErr"></div>
+    <div class="small" style="margin-top:12px">
+      The code expires shortly and works once. If the email never arrives, it is
+      also written to the server log — <code class="mono">journalctl -u focustrack -n 20</code>
+    </div>
   </div>
 </div>
 
@@ -189,33 +208,76 @@ const statusPill = (s) =>
   : '<span class="pill bad">suspended</span>';
 
 // ---------- auth ----------
+let challenge = null;
+
+function showStep(which) {
+  $('#loginView').classList.toggle('hidden', which !== 'pin');
+  $('#otpView').classList.toggle('hidden', which !== 'otp');
+  $('#panel').classList.toggle('hidden', which !== 'panel');
+}
+
 function signOut() {
   localStorage.removeItem(KEY);
   token = '';
-  $('#panel').classList.add('hidden');
-  $('#loginView').classList.remove('hidden');
+  challenge = null;
+  showStep('pin');
 }
 $('#signout').onclick = async (e) => {
   e.preventDefault();
   try { await api('/api/logout', { method: 'POST' }); } catch {}
   signOut();
 };
+const post = async (url, body) => {
+  const r = await fetch(url, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.error || 'Something went wrong');
+  return d;
+};
+
+function signedIn(d) {
+  token = d.token;
+  localStorage.setItem(KEY, token);
+  $('#who').textContent = 'Signed in as ' + d.user.name;
+  boot();
+}
+
 $('#loginBtn').onclick = async () => {
   $('#loginErr').textContent = '';
+  $('#loginBtn').disabled = true;
   try {
-    const r = await fetch('/api/master/login', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: $('#lName').value, pin: $('#lPin').value }),
-    });
-    const d = await r.json();
-    if (!r.ok) throw new Error(d.error || 'Login failed');
-    token = d.token;
-    localStorage.setItem(KEY, token);
-    $('#who').textContent = 'Signed in as ' + d.user.name;
-    boot();
+    const d = await post('/api/master/login', { name: $('#lName').value, pin: $('#lPin').value });
+    if (d.otpRequired) {
+      challenge = d.challenge;
+      $('#otpSub').textContent = `We sent a 6-digit code to ${d.sentTo}. It expires in ${d.expiresInMinutes} minutes.`;
+      $('#otpCode').value = '';
+      showStep('otp');
+      $('#otpCode').focus();
+    } else {
+      if (d.warning) console.warn(d.warning);
+      signedIn(d);
+    }
   } catch (e) { $('#loginErr').textContent = e.message; }
+  finally { $('#loginBtn').disabled = false; }
 };
 $('#lPin').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#loginBtn').click(); });
+
+$('#otpBtn').onclick = async () => {
+  $('#otpErr').textContent = '';
+  $('#otpBtn').disabled = true;
+  try {
+    signedIn(await post('/api/master/otp', { challenge, code: $('#otpCode').value }));
+  } catch (e) { $('#otpErr').textContent = e.message; }
+  finally { $('#otpBtn').disabled = false; }
+};
+$('#otpBack').onclick = () => { challenge = null; $('#lPin').value = ''; showStep('pin'); };
+$('#otpCode').addEventListener('input', (e) => {
+  e.target.value = e.target.value.replace(/\D/g, '');
+  if (e.target.value.length === 6) $('#otpBtn').click();
+});
+$('#otpCode').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#otpBtn').click(); });
 
 // ---------- tabs ----------
 document.querySelector('.tabs').onclick = (e) => {
@@ -391,8 +453,7 @@ async function loadAudit() {
 $('#refresh').onclick = () => loadOverview();
 
 async function boot() {
-  $('#loginView').classList.add('hidden');
-  $('#panel').classList.remove('hidden');
+  showStep('panel');
   const me = await api('/api/me');
   if (me.user.role !== 'master') { signOut(); return; }
   $('#who').textContent = 'Signed in as ' + me.user.name;

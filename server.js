@@ -3,7 +3,8 @@
 const path = require('path');
 const crypto = require('crypto');
 const express = require('express');
-const { db, hashPin, verifyPin, nowISO } = require('./db');
+const { db, hashPin, verifyPin, nowISO, pinProblem, MIN_PIN } = require('./db');
+const mailer = require('./mailer');
 
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || '127.0.0.1';
@@ -17,6 +18,10 @@ const RESERVED_SLUGS = new Set([
 ]);
 
 const app = express();
+// nginx sits in front, so the real client address arrives in X-Forwarded-For.
+// Without this every request looks like 127.0.0.1 and one attacker would
+// lock out the entire internet.
+app.set('trust proxy', true);
 app.use(express.json({ limit: '256kb' }));
 
 // ---------------------------------------------------------------- utilities
@@ -53,6 +58,60 @@ const validSlug = (s) => /^[a-z0-9][a-z0-9-]{1,31}$/.test(s) && !RESERVED_SLUGS.
 function audit(actor, action, detail) {
   db.prepare('INSERT INTO audit_log (at, actor, action, detail) VALUES (?,?,?,?)')
     .run(nowISO(), actor, action, String(detail || '').slice(0, 500));
+}
+
+// ------------------------------------------------------------ login guard
+// Two independent counters. The account counter stops someone grinding one
+// person's PIN; the IP counter stops them spraying cheap guesses across many
+// accounts. Both auto-expire, so nobody needs to unlock anything by hand.
+const ACCOUNT_FAILS = Number(process.env.ACCOUNT_FAILS || 5);
+const ACCOUNT_LOCK_MIN = Number(process.env.ACCOUNT_LOCK_MINUTES || 15);
+const IP_FAILS = Number(process.env.IP_FAILS || 20);
+const IP_LOCK_MIN = Number(process.env.IP_LOCK_MINUTES || 15);
+const WINDOW_MIN = 15;
+
+const clientIp = (req) => String(req.ip || req.connection?.remoteAddress || 'unknown').slice(0, 45);
+
+function guardStatus(key) {
+  const row = db.prepare('SELECT * FROM login_guard WHERE key = ?').get(key);
+  if (!row || !row.locked_until) return { locked: false };
+  const until = new Date(row.locked_until);
+  if (until > new Date()) {
+    return { locked: true, minutes: Math.max(1, Math.ceil((until - Date.now()) / 60000)) };
+  }
+  db.prepare('DELETE FROM login_guard WHERE key = ?').run(key);
+  return { locked: false };
+}
+
+function guardFail(key, maxFails, lockMinutes) {
+  const now = Date.now();
+  const row = db.prepare('SELECT * FROM login_guard WHERE key = ?').get(key);
+  const stale = row && row.first_fail_at && (now - new Date(row.first_fail_at).getTime()) > WINDOW_MIN * 60000;
+  const fails = (!row || stale) ? 1 : row.fails + 1;
+  const firstAt = (!row || stale) ? nowISO() : row.first_fail_at;
+  const lockedUntil = fails >= maxFails ? new Date(now + lockMinutes * 60000).toISOString() : null;
+
+  db.prepare(`INSERT INTO login_guard (key, fails, first_fail_at, locked_until) VALUES (?,?,?,?)
+              ON CONFLICT(key) DO UPDATE SET fails=excluded.fails,
+                first_fail_at=excluded.first_fail_at, locked_until=excluded.locked_until`)
+    .run(key, fails, firstAt, lockedUntil);
+  return { fails, locked: !!lockedUntil, minutes: lockMinutes };
+}
+
+const guardReset = (key) => db.prepare('DELETE FROM login_guard WHERE key = ?').run(key);
+
+// One message for every failure. Telling an attacker "no such user" or
+// "wrong PIN" hands them a way to discover valid names for free.
+const BAD_LOGIN = 'Wrong details. Please check and try again.';
+const lockedMsg = (m) => `Too many failed attempts. Try again in ${m} minutes.`;
+
+function ipBlocked(req, res) {
+  const s = guardStatus('ip:' + clientIp(req));
+  if (s.locked) {
+    res.status(429).json({ error: lockedMsg(s.minutes) });
+    return true;
+  }
+  return false;
 }
 
 function issueToken(userId, impersonatedBy) {
@@ -117,11 +176,15 @@ const businessAdmin = (req, res, next) =>
     : res.status(403).json({ error: 'Admins only' });
 
 const wrap = (fn) => (req, res) => {
-  try {
-    fn(req, res);
-  } catch (err) {
+  const fail = (err) => {
     console.error(err);
-    res.status(500).json({ error: err.message || 'Server error' });
+    if (!res.headersSent) res.status(500).json({ error: err.message || 'Server error' });
+  };
+  try {
+    const out = fn(req, res);
+    if (out && typeof out.catch === 'function') out.catch(fail);   // async handlers
+  } catch (err) {
+    fail(err);
   }
 };
 
@@ -133,8 +196,20 @@ const touchBusiness = (id) => {
 
 // ------------------------------------------------------------------ signup
 
-app.get('/api/slug-available/:slug', wrap((req, res) => {
-  const slug = slugify(req.params.slug);
+// Checking whether a team link exists is gated behind a real, unused invite
+// code. Otherwise anyone could walk the alphabet and map every customer you
+// have, which is step one of guessing your way into a workspace.
+app.post('/api/slug-check', wrap((req, res) => {
+  if (ipBlocked(req, res)) return;
+
+  const code = String(req.body.code || '').trim().toUpperCase();
+  const invite = code && db.prepare('SELECT * FROM invite_codes WHERE code = ?').get(code);
+  if (!invite || invite.used_by) {
+    guardFail('ip:' + clientIp(req), IP_FAILS, IP_LOCK_MIN);
+    return res.status(403).json({ error: 'Enter a valid invite code first' });
+  }
+
+  const slug = slugify(req.body.slug || '');
   if (!validSlug(slug)) {
     return res.json({ slug, available: false, reason: 'Use 2-32 letters, numbers or dashes.' });
   }
@@ -143,6 +218,7 @@ app.get('/api/slug-available/:slug', wrap((req, res) => {
 }));
 
 app.post('/api/signup', wrap((req, res) => {
+  if (ipBlocked(req, res)) return;
   const code = String(req.body.code || '').trim().toUpperCase();
   const bizName = String(req.body.business_name || '').trim();
   const slug = slugify(req.body.slug || bizName);
@@ -154,10 +230,14 @@ app.post('/api/signup', wrap((req, res) => {
   if (!bizName) return res.status(400).json({ error: 'Business name required' });
   if (!validSlug(slug)) return res.status(400).json({ error: 'Pick a different team link' });
   if (!ownerName) return res.status(400).json({ error: 'Your name is required' });
-  if (pin.length < 4) return res.status(400).json({ error: 'PIN must be at least 4 digits' });
+  const pinIssue = pinProblem(pin);
+  if (pinIssue) return res.status(400).json({ error: pinIssue });
 
   const invite = db.prepare('SELECT * FROM invite_codes WHERE code = ?').get(code);
-  if (!invite) return res.status(400).json({ error: 'That invite code is not valid' });
+  if (!invite) {
+    guardFail('ip:' + clientIp(req), IP_FAILS, IP_LOCK_MIN);
+    return res.status(400).json({ error: 'That invite code is not valid' });
+  }
   if (invite.used_by) return res.status(400).json({ error: 'That invite code has already been used' });
   if (db.prepare('SELECT 1 FROM businesses WHERE slug = ?').get(slug)) {
     return res.status(409).json({ error: 'That team link is taken — try another' });
@@ -192,13 +272,32 @@ app.post('/api/signup', wrap((req, res) => {
 // ------------------------------------------------------------------- auth
 
 app.post('/api/login', wrap((req, res) => {
+  if (ipBlocked(req, res)) return;
+
   const slug = slugify(req.body.slug || '');
   const name = String(req.body.name || '').trim();
   const pin = String(req.body.pin || '').trim();
   if (!slug || !name || !pin) return res.status(400).json({ error: 'All fields are required' });
 
+  const ipKey = 'ip:' + clientIp(req);
+  const acctKey = `user:${slug}:${name.toLowerCase()}`;
+
+  const acct = guardStatus(acctKey);
+  if (acct.locked) return res.status(429).json({ error: lockedMsg(acct.minutes) });
+
+  const fail = (detail) => {
+    guardFail(ipKey, IP_FAILS, IP_LOCK_MIN);
+    const r = guardFail(acctKey, ACCOUNT_FAILS, ACCOUNT_LOCK_MIN);
+    audit(`${slug}/${name}`, 'login_failed', `${detail} from ${clientIp(req)}`);
+    if (r.locked) return res.status(429).json({ error: lockedMsg(r.minutes) });
+    const left = ACCOUNT_FAILS - r.fails;
+    return res.status(401).json({
+      error: BAD_LOGIN + (left <= 2 && left > 0 ? ` ${left} attempt${left === 1 ? '' : 's'} left.` : ''),
+    });
+  };
+
   const biz = db.prepare('SELECT * FROM businesses WHERE slug = ?').get(slug);
-  if (!biz) return res.status(404).json({ error: 'No such team link' });
+  if (!biz) return fail('unknown team link');
   if (biz.status === 'pending') {
     return res.status(403).json({ error: 'This account is waiting for approval.' });
   }
@@ -209,10 +308,9 @@ app.post('/api/login', wrap((req, res) => {
   const user = db
     .prepare('SELECT * FROM users WHERE business_id = ? AND lower(name) = lower(?) AND active = 1')
     .get(biz.id, name);
-  if (!user || !verifyPin(pin, user.pin_hash)) {
-    return res.status(401).json({ error: 'Wrong name or PIN' });
-  }
+  if (!user || !verifyPin(pin, user.pin_hash)) return fail('bad name or PIN');
 
+  guardReset(acctKey);
   touchBusiness(biz.id);
   res.json({
     token: issueToken(user.id),
@@ -221,16 +319,105 @@ app.post('/api/login', wrap((req, res) => {
   });
 }));
 
-app.post('/api/master/login', wrap((req, res) => {
+// ----------------------------------------------------- master login + OTP
+
+const OTP_MINUTES = Number(process.env.OTP_MINUTES || 10);
+const OTP_MAX_ATTEMPTS = 5;
+const maskEmail = (e) => {
+  const [u, d] = String(e).split('@');
+  if (!d) return 'your email';
+  return `${u.slice(0, 2)}${'•'.repeat(Math.max(2, u.length - 2))}@${d}`;
+};
+
+app.post('/api/master/login', wrap(async (req, res) => {
+  if (ipBlocked(req, res)) return;
+
   const name = String(req.body.name || '').trim();
   const pin = String(req.body.pin || '').trim();
+  const ipKey = 'ip:' + clientIp(req);
+  const acctKey = `master:${name.toLowerCase()}`;
+
+  const acct = guardStatus(acctKey);
+  if (acct.locked) return res.status(429).json({ error: lockedMsg(acct.minutes) });
+
   const user = db
     .prepare("SELECT * FROM users WHERE business_id IS NULL AND role='master' AND lower(name)=lower(?) AND active=1")
     .get(name);
+
   if (!user || !verifyPin(pin, user.pin_hash)) {
-    return res.status(401).json({ error: 'Wrong name or PIN' });
+    guardFail(ipKey, IP_FAILS, IP_LOCK_MIN);
+    const r = guardFail(acctKey, ACCOUNT_FAILS, ACCOUNT_LOCK_MIN);
+    audit(name || '(blank)', 'master_login_failed', `from ${clientIp(req)}`);
+    if (r.locked) return res.status(429).json({ error: lockedMsg(r.minutes) });
+    return res.status(401).json({ error: BAD_LOGIN });
   }
-  audit(user.name, 'master_login', '');
+
+  guardReset(acctKey);
+
+  // No email on the account means no second factor is possible. Kept so the
+  // first-run setup and the tests still work, but flagged in the response.
+  if (!user.email) {
+    audit(user.name, 'master_login', 'no email set — single factor');
+    return res.json({
+      token: issueToken(user.id),
+      user: { id: user.id, name: user.name, role: 'master' },
+      warning: 'No email is set on this account, so no code was required. Add one with seed.js.',
+    });
+  }
+
+  const code = String(crypto.randomInt(100000, 1000000));
+  const id = crypto.randomBytes(16).toString('hex');
+  db.prepare(`INSERT INTO otp_challenges (id, user_id, code_hash, created_at, expires_at)
+              VALUES (?,?,?,?,?)`)
+    .run(id, user.id, hashPin(code), nowISO(),
+         new Date(Date.now() + OTP_MINUTES * 60000).toISOString());
+
+  const mail = mailer.otpEmail(code, OTP_MINUTES);
+  try {
+    await mailer.sendMail({ to: user.email, subject: mail.subject, text: mail.text });
+    audit(user.name, 'master_otp_sent', maskEmail(user.email));
+  } catch (err) {
+    // Never leave yourself locked out because Gmail had a bad day. The code
+    // goes to the server log, readable with:
+    //   journalctl -u focustrack -n 20
+    console.error('[otp] could not send email:', err.message);
+    console.error(`[otp] FALLBACK — sign-in code for ${user.name} is ${code} (valid ${OTP_MINUTES} min)`);
+    audit(user.name, 'master_otp_mail_failed', err.message);
+  }
+
+  res.json({ otpRequired: true, challenge: id, sentTo: maskEmail(user.email), expiresInMinutes: OTP_MINUTES });
+}));
+
+app.post('/api/master/otp', wrap((req, res) => {
+  if (ipBlocked(req, res)) return;
+
+  const id = String(req.body.challenge || '');
+  const code = String(req.body.code || '').trim();
+  const row = db.prepare('SELECT * FROM otp_challenges WHERE id = ?').get(id);
+
+  if (!row || row.used_at) return res.status(401).json({ error: 'That code is no longer valid. Start again.' });
+  if (new Date(row.expires_at) < new Date()) {
+    return res.status(401).json({ error: 'That code has expired. Start again.' });
+  }
+  if (row.attempts >= OTP_MAX_ATTEMPTS) {
+    return res.status(429).json({ error: 'Too many wrong codes. Start again.' });
+  }
+
+  if (!verifyPin(code, row.code_hash)) {
+    db.prepare('UPDATE otp_challenges SET attempts = attempts + 1 WHERE id = ?').run(id);
+    guardFail('ip:' + clientIp(req), IP_FAILS, IP_LOCK_MIN);
+    const left = OTP_MAX_ATTEMPTS - (row.attempts + 1);
+    audit('master', 'master_otp_failed', `from ${clientIp(req)}`);
+    return res.status(401).json({
+      error: left > 0 ? `Wrong code. ${left} attempt${left === 1 ? '' : 's'} left.` : 'Too many wrong codes. Start again.',
+    });
+  }
+
+  db.prepare('UPDATE otp_challenges SET used_at = ? WHERE id = ?').run(nowISO(), id);
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(row.user_id);
+  if (!user || !user.active) return res.status(401).json({ error: 'Account unavailable' });
+
+  audit(user.name, 'master_login', `verified by email code from ${clientIp(req)}`);
   res.json({ token: issueToken(user.id), user: { id: user.id, name: user.name, role: 'master' } });
 }));
 
@@ -238,6 +425,8 @@ app.post('/api/logout', auth, wrap((req, res) => {
   db.prepare('DELETE FROM tokens WHERE token = ?').run(req.token);
   res.json({ ok: true });
 }));
+
+app.get('/api/policy', (req, res) => res.json({ minPin: MIN_PIN }));
 
 app.get('/api/me', auth, wrap((req, res) => {
   res.json({
@@ -574,9 +763,9 @@ app.post('/api/admin/users', auth, businessAdmin, wrap((req, res) => {
   const pin = String(req.body.pin || '').trim();
   const role = req.body.role === 'admin' ? 'admin' : 'employee';
   const team = String(req.body.team || '').trim();
-  if (!name || pin.length < 4) {
-    return res.status(400).json({ error: 'Name required and PIN must be 4+ digits' });
-  }
+  if (!name) return res.status(400).json({ error: 'Name is required' });
+  const pinIssue = pinProblem(pin);
+  if (pinIssue) return res.status(400).json({ error: pinIssue });
 
   const seatsUsed = db
     .prepare('SELECT COUNT(*) c FROM users WHERE business_id = ? AND active = 1')
@@ -606,7 +795,8 @@ app.patch('/api/admin/users/:id', auth, businessAdmin, wrap((req, res) => {
 
   if (req.body.pin) {
     const pin = String(req.body.pin).trim();
-    if (pin.length < 4) return res.status(400).json({ error: 'PIN must be 4+ digits' });
+    const issue = pinProblem(pin);
+    if (issue) return res.status(400).json({ error: issue });
     db.prepare('UPDATE users SET pin_hash = ? WHERE id = ?').run(hashPin(pin), user.id);
     db.prepare('DELETE FROM tokens WHERE user_id = ?').run(user.id);
   }
@@ -624,6 +814,15 @@ app.patch('/api/admin/users/:id', auth, businessAdmin, wrap((req, res) => {
     db.prepare('UPDATE users SET team = ? WHERE id = ?').run(String(req.body.team).trim(), user.id);
   }
   res.json({ ok: true });
+}));
+
+app.post('/api/admin/logout-all', auth, businessAdmin, wrap((req, res) => {
+  const info = db.prepare(
+    `DELETE FROM tokens WHERE token != ?
+       AND user_id IN (SELECT id FROM users WHERE business_id = ?)`
+  ).run(req.token, req.business.id);
+  audit(`${req.business.slug}/${req.user.name}`, 'logout_all', `${info.changes} sessions ended`);
+  res.json({ ok: true, endedSessions: info.changes });
 }));
 
 app.patch('/api/admin/settings', auth, businessAdmin, wrap((req, res) => {
@@ -887,7 +1086,12 @@ app.use((req, res) => {
 // ------------------------------------------------------------------ boot
 
 setInterval(() => {
-  try { db.prepare('DELETE FROM tokens WHERE expires_at < ?').run(nowISO()); } catch {}
+  try {
+    const now = nowISO();
+    db.prepare('DELETE FROM tokens WHERE expires_at < ?').run(now);
+    db.prepare('DELETE FROM otp_challenges WHERE expires_at < ?').run(now);
+    db.prepare("DELETE FROM login_guard WHERE locked_until IS NULL OR locked_until < ?").run(now);
+  } catch {}
 }, 6 * 3600 * 1000).unref();
 
 if (require.main === module) {

@@ -25,10 +25,10 @@ const server = app.listen(0, async () => {
 
     // ---------- master ----------
     db.prepare(`INSERT INTO users (business_id, name, pin_hash, role, team, created_at)
-                VALUES (NULL,?,?,'master','platform',?)`).run('Atul', hashPin('4321'), nowISO());
+                VALUES (NULL,?,?,'master','platform',?)`).run('Atul', hashPin('481902'), nowISO());
 
-    assert.strictEqual((await post('/api/master/login', { name: 'Atul', pin: '0000' })).status, 401);
-    const master = (await post('/api/master/login', { name: 'Atul', pin: '4321' })).body.token;
+    assert.strictEqual((await post('/api/master/login', { name: 'Atul', pin: '240816' })).status, 401);
+    const master = (await post('/api/master/login', { name: 'Atul', pin: '481902' })).body.token;
     assert.ok(master);
     ok('master admin can sign in');
 
@@ -45,55 +45,55 @@ const server = app.listen(0, async () => {
 
     // ---------- signup ----------
     assert.strictEqual((await post('/api/signup', {
-      code: 'FAKE-CODE', business_name: 'X', slug: 'x1', owner_name: 'A', owner_pin: '1111' })).status, 400);
+      code: 'FAKE-CODE', business_name: 'X', slug: 'x1', owner_name: 'A', owner_pin: '774411' })).status, 400);
     ok('invalid invite code rejected');
 
     assert.strictEqual((await post('/api/signup', {
-      code: c1, business_name: 'API Co', slug: 'api', owner_name: 'A', owner_pin: '1111' })).status, 400);
+      code: c1, business_name: 'API Co', slug: 'api', owner_name: 'A', owner_pin: '774411' })).status, 400);
     ok('reserved slug rejected');
 
     const s1 = await post('/api/signup', {
       code: c1, business_name: 'Acme Events', slug: 'acme',
-      owner_name: 'Ravi', owner_pin: '1111', contact_email: 'a@acme.com' });
+      owner_name: 'Ravi', owner_pin: '774411', contact_email: 'a@acme.com' });
     assert.strictEqual(s1.status, 200);
     assert.strictEqual(s1.body.status, 'active');
     ok('signup with auto-approve code creates an active workspace');
 
     assert.strictEqual((await post('/api/signup', {
-      code: c1, business_name: 'Second', slug: 'second', owner_name: 'B', owner_pin: '2222' })).status, 400);
+      code: c1, business_name: 'Second', slug: 'second', owner_name: 'B', owner_pin: '620744' })).status, 400);
     ok('invite code cannot be reused');
 
     const s2 = await post('/api/signup', {
-      code: c2, business_name: 'Globex', slug: 'globex', owner_name: 'Priya', owner_pin: '2222' });
+      code: c2, business_name: 'Globex', slug: 'globex', owner_name: 'Priya', owner_pin: '620744' });
     assert.strictEqual(s2.status, 200);
 
     const s3 = await post('/api/signup', {
-      code: c3, business_name: 'Pending Co', slug: 'pendingco', owner_name: 'Sam', owner_pin: '3333' });
+      code: c3, business_name: 'Pending Co', slug: 'pendingco', owner_name: 'Sam', owner_pin: '830155' });
     assert.strictEqual(s3.body.status, 'pending');
     ok('non-auto-approve code parks the business in pending');
 
     assert.strictEqual((await post('/api/signup', {
       code: (await post('/api/master/codes', {}, master)).body.code,
-      business_name: 'Dupe', slug: 'acme', owner_name: 'C', owner_pin: '4444' })).status, 409);
+      business_name: 'Dupe', slug: 'acme', owner_name: 'C', owner_pin: '962037' })).status, 409);
     ok('duplicate team link rejected');
 
     // ---------- login scoping ----------
-    const acme = (await post('/api/login', { slug: 'acme', name: 'Ravi', pin: '1111' })).body.token;
-    const globex = (await post('/api/login', { slug: 'globex', name: 'Priya', pin: '2222' })).body.token;
+    const acme = (await post('/api/login', { slug: 'acme', name: 'Ravi', pin: '774411' })).body.token;
+    const globex = (await post('/api/login', { slug: 'globex', name: 'Priya', pin: '620744' })).body.token;
     assert.ok(acme && globex);
     ok('owners can sign in at their own team link');
 
-    assert.strictEqual((await post('/api/login', { slug: 'globex', name: 'Ravi', pin: '1111' })).status, 401);
+    assert.strictEqual((await post('/api/login', { slug: 'globex', name: 'Ravi', pin: '774411' })).status, 401);
     ok('credentials do not work on another business link');
 
-    assert.strictEqual((await post('/api/login', { slug: 'pendingco', name: 'Sam', pin: '3333' })).status, 403);
+    assert.strictEqual((await post('/api/login', { slug: 'pendingco', name: 'Sam', pin: '830155' })).status, 403);
     ok('pending business cannot sign in yet');
 
     // same employee name in two businesses
-    assert.strictEqual((await post('/api/admin/users', { name: 'Ravi Jr', pin: '9999' }, acme)).status, 200);
-    assert.strictEqual((await post('/api/admin/users', { name: 'Ravi Jr', pin: '8888' }, globex)).status, 200);
-    const aJr = (await post('/api/login', { slug: 'acme', name: 'Ravi Jr', pin: '9999' })).body.token;
-    const gJr = (await post('/api/login', { slug: 'globex', name: 'Ravi Jr', pin: '8888' })).body.token;
+    assert.strictEqual((await post('/api/admin/users', { name: 'Ravi Jr', pin: '905513' }, acme)).status, 200);
+    assert.strictEqual((await post('/api/admin/users', { name: 'Ravi Jr', pin: '318266' }, globex)).status, 200);
+    const aJr = (await post('/api/login', { slug: 'acme', name: 'Ravi Jr', pin: '905513' })).body.token;
+    const gJr = (await post('/api/login', { slug: 'globex', name: 'Ravi Jr', pin: '318266' })).body.token;
     assert.ok(aJr && gJr);
     ok('two businesses can both employ a "Ravi Jr" with different PINs');
 
@@ -127,9 +127,9 @@ const server = app.listen(0, async () => {
     const globexUserId = db.prepare(`SELECT u.id FROM users u JOIN businesses b ON b.id = u.business_id
                                       WHERE b.slug='globex' AND u.name='Ravi Jr'`).get().id;
     const attack = await call(`/api/admin/users/${globexUserId}`, {
-      method: 'PATCH', body: JSON.stringify({ pin: '0000' }) }, acme);
+      method: 'PATCH', body: JSON.stringify({ pin: '240816' }) }, acme);
     assert.strictEqual(attack.status, 404);
-    assert.strictEqual((await post('/api/login', { slug: 'globex', name: 'Ravi Jr', pin: '8888' })).status, 200);
+    assert.strictEqual((await post('/api/login', { slug: 'globex', name: 'Ravi Jr', pin: '318266' })).status, 200);
     ok('one business cannot reset another business\'s PINs');
 
     // employee cannot reach admin endpoints
@@ -139,8 +139,8 @@ const server = app.listen(0, async () => {
 
     // ---------- seat limits ----------
     // Acme code was 3 seats: owner + Ravi Jr = 2 used.
-    assert.strictEqual((await post('/api/admin/users', { name: 'Third', pin: '1234' }, acme)).status, 200);
-    const over = await post('/api/admin/users', { name: 'Fourth', pin: '1234' }, acme);
+    assert.strictEqual((await post('/api/admin/users', { name: 'Third', pin: '517399' }, acme)).status, 200);
+    const over = await post('/api/admin/users', { name: 'Fourth', pin: '517399' }, acme);
     assert.strictEqual(over.status, 403);
     assert.match(over.body.error, /seats/i);
     ok('seat limit blocks the 4th user on a 3-seat plan');
@@ -148,19 +148,19 @@ const server = app.listen(0, async () => {
     const acmeBizId = db.prepare("SELECT id FROM businesses WHERE slug='acme'").get().id;
     await call(`/api/master/businesses/${acmeBizId}`, {
       method: 'PATCH', body: JSON.stringify({ seat_limit: 5 }) }, master);
-    assert.strictEqual((await post('/api/admin/users', { name: 'Fourth', pin: '1234' }, acme)).status, 200);
+    assert.strictEqual((await post('/api/admin/users', { name: 'Fourth', pin: '517399' }, acme)).status, 200);
     ok('raising the seat limit from master immediately unblocks it');
 
     // ---------- approval + suspension ----------
     const pendingId = db.prepare("SELECT id FROM businesses WHERE slug='pendingco'").get().id;
     await post(`/api/master/businesses/${pendingId}/status`, { status: 'active' }, master);
-    const samTok = (await post('/api/login', { slug: 'pendingco', name: 'Sam', pin: '3333' })).body.token;
+    const samTok = (await post('/api/login', { slug: 'pendingco', name: 'Sam', pin: '830155' })).body.token;
     assert.ok(samTok);
     ok('master approval lets a pending business in');
 
     await post(`/api/master/businesses/${pendingId}/status`, { status: 'suspended' }, master);
     assert.strictEqual((await call('/api/me', {}, samTok)).status, 401);
-    assert.strictEqual((await post('/api/login', { slug: 'pendingco', name: 'Sam', pin: '3333' })).status, 403);
+    assert.strictEqual((await post('/api/login', { slug: 'pendingco', name: 'Sam', pin: '830155' })).status, 403);
     ok('suspension signs everyone out and blocks new logins');
 
     await post(`/api/master/businesses/${pendingId}/status`, { status: 'active' }, master);
@@ -219,10 +219,11 @@ const server = app.listen(0, async () => {
     assert.strictEqual((await call('/')).status, 200);
     ok('per-business URLs resolve and unknown links 404');
 
-    const avail = (await call('/api/slug-available/acme')).body;
+    const spare = (await post('/api/master/codes', {}, master)).body.code;
+    const avail = (await post('/api/slug-check', { code: spare, slug: 'acme' })).body;
     assert.strictEqual(avail.available, false);
-    assert.strictEqual((await call('/api/slug-available/brand-new-co')).body.available, true);
-    ok('team link availability check works');
+    assert.strictEqual((await post('/api/slug-check', { code: spare, slug: 'brand-new-co' })).body.available, true);
+    ok('team link availability check works behind an invite code');
 
     // A near-zero-length session with an interruption must not score perfectly.
     const gameId = db.prepare(`INSERT INTO sessions (business_id,user_id,task,planned_minutes,started_at,ended_at,status,actual_seconds)
@@ -286,14 +287,17 @@ const server = app.listen(0, async () => {
     }
     ok('deletion removes the business, its people, sessions and interruptions');
 
-    assert.strictEqual((await post('/api/login', { slug: 'globex', name: 'Priya', pin: '2222' })).status, 404);
-    ok('the deleted team link stops working');
+    const goneLogin = await post('/api/login', { slug: 'globex', name: 'Priya', pin: '620744' });
+    assert.strictEqual(goneLogin.status, 401);
+    assert.match(goneLogin.body.error, /Wrong details/);
+    ok('the deleted team link stops working, without revealing it ever existed');
 
     // Acme is untouched by its neighbour being deleted.
     assert.strictEqual((await call('/api/admin/stats', {}, acme)).body.totals.sessions, 4);
     ok('deleting one business leaves the others intact');
 
-    assert.strictEqual((await call('/api/slug-available/globex')).body.available, true);
+    const spare2 = (await post('/api/master/codes', {}, master)).body.code;
+    assert.strictEqual((await post('/api/slug-check', { code: spare2, slug: 'globex' })).body.available, true);
     ok('the freed team link becomes available again');
 
     const auditAfter = (await call('/api/master/audit', {}, master)).body.entries;
