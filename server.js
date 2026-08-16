@@ -465,6 +465,17 @@ app.post('/api/sessions/start', auth, wrap((req, res) => {
     return res.status(400).json({ error: 'Duration must be 5-240 minutes' });
   }
 
+  // Starting from a plan item stamps the session so we can later compare what
+  // was planned against what actually happened. Anything typed freely just
+  // carries no plan id.
+  let planItemId = null;
+  if (req.body.plan_item_id) {
+    const item = db.prepare('SELECT * FROM plan_items WHERE id = ? AND user_id = ?')
+      .get(Number(req.body.plan_item_id), req.user.id);
+    if (!item) return res.status(404).json({ error: 'That task is not on your plan' });
+    planItemId = item.id;
+  }
+
   const stale = db
     .prepare("SELECT * FROM sessions WHERE user_id = ? AND status = 'running'")
     .all(req.user.id);
@@ -475,9 +486,9 @@ app.post('/api/sessions/start', auth, wrap((req, res) => {
   }
 
   const info = db
-    .prepare(`INSERT INTO sessions (business_id, user_id, task, planned_minutes, started_at, status)
-              VALUES (?,?,?,?,?,'running')`)
-    .run(req.user.business_id, req.user.id, task, minutes, nowISO());
+    .prepare(`INSERT INTO sessions (business_id, user_id, task, planned_minutes, started_at, status, plan_item_id)
+              VALUES (?,?,?,?,?,'running',?)`)
+    .run(req.user.business_id, req.user.id, task, minutes, nowISO(), planItemId);
 
   touchBusiness(req.user.business_id);
   res.json({
@@ -538,6 +549,177 @@ app.get('/api/my/today', auth, wrap((req, res) => {
     },
     recent: rows.slice(0, 12),
   });
+}));
+
+// ------------------------------------------------------------ day planner
+
+const MAX_ROLLOVER_DAYS = Number(process.env.MAX_ROLLOVER_DAYS || 7);
+const validAtTime = (t) => /^([01]\d|2[0-3]):[0-5]\d$/.test(t);
+
+// Unfinished work follows you forward, but only from the last week. Someone
+// back from leave should not open the app to forty stale tasks.
+function rollForward(userId, businessId, today) {
+  const cutoff = new Date(new Date(today + 'T00:00:00Z') - MAX_ROLLOVER_DAYS * 86400000)
+    .toISOString().slice(0, 10);
+
+  // Retire the truly ancient first. This has to happen whether or not anything
+  // recent is moving, otherwise a forgotten task from months ago sits open
+  // forever and quietly drags down every planned-vs-actual figure.
+  db.prepare(
+    "UPDATE plan_items SET status = 'skipped', skip_reason = 'expired' " +
+    "WHERE user_id = ? AND status = 'open' AND plan_date < ?"
+  ).run(userId, cutoff);
+
+  const stale = db.prepare(
+    `SELECT * FROM plan_items
+      WHERE user_id = ? AND status = 'open' AND plan_date < ? AND plan_date >= ?
+      ORDER BY plan_date, position`
+  ).all(userId, today, cutoff);
+  if (!stale.length) return;
+
+  const maxPos = db.prepare(
+    'SELECT COALESCE(MAX(position), -1) p FROM plan_items WHERE user_id = ? AND plan_date = ?'
+  ).get(userId, today).p;
+
+  let pos = maxPos + 1;
+  for (const item of stale) {
+    // Move the row rather than copying it, so a task keeps one identity and the
+    // sessions already logged against it stay attached.
+    db.prepare(
+      `UPDATE plan_items
+          SET plan_date = ?, position = ?, moved_count = moved_count + 1,
+              moved_from = COALESCE(moved_from, plan_date)
+        WHERE id = ?`
+    ).run(today, pos++, item.id);
+  }
+}
+
+// Fixed-time items sort by their clock time; everything else keeps its manual
+// order. Sorting here keeps both screens consistent without duplicating logic.
+function readPlan(userId, businessId, date, { roll = false } = {}) {
+  if (roll) rollForward(userId, businessId, date);
+
+  const items = db.prepare(
+    `SELECT p.*,
+            (SELECT COALESCE(SUM(s.actual_seconds), 0) FROM sessions s
+              WHERE s.plan_item_id = p.id) AS actual_seconds,
+            (SELECT COUNT(*) FROM sessions s WHERE s.plan_item_id = p.id) AS session_count
+       FROM plan_items p
+      WHERE p.user_id = ? AND p.plan_date = ?
+      ORDER BY p.position, p.id`
+  ).all(userId, date);
+
+  const open = items.filter((i) => i.status === 'open');
+  return {
+    date,
+    items,
+    totals: {
+      items: items.length,
+      done: items.filter((i) => i.status === 'done').length,
+      plannedMinutes: open.reduce((a, i) => a + i.estimate_min, 0),
+      actualMinutes: Math.round(items.reduce((a, i) => a + i.actual_seconds, 0) / 60),
+      movedIn: items.filter((i) => i.moved_count > 0).length,
+    },
+  };
+}
+
+// Employees see and edit their own plan. Rollover runs on read, so simply
+// opening the app is what pulls yesterday's leftovers forward.
+app.get('/api/my/plan', auth, wrap((req, res) => {
+  const tz = req.business.tz_offset;
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(req.query.date || '') ? req.query.date : todayLocal(tz);
+  res.json(readPlan(req.user.id, req.user.business_id, date, { roll: date === todayLocal(tz) }));
+}));
+
+app.post('/api/my/plan', auth, wrap((req, res) => {
+  const tz = req.business.tz_offset;
+  const title = String(req.body.title || '').trim().slice(0, 200);
+  if (!title) return res.status(400).json({ error: 'Give the task a name' });
+
+  const estimate = Math.max(5, Math.min(480, Number(req.body.estimate_min) || 30));
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(req.body.date || '') ? req.body.date : todayLocal(tz);
+  const atTime = req.body.at_time && validAtTime(req.body.at_time) ? req.body.at_time : null;
+
+  const pos = db.prepare(
+    'SELECT COALESCE(MAX(position), -1) p FROM plan_items WHERE user_id = ? AND plan_date = ?'
+  ).get(req.user.id, date).p + 1;
+
+  const info = db.prepare(
+    `INSERT INTO plan_items (business_id, user_id, plan_date, title, estimate_min,
+                             at_time, position, created_at)
+     VALUES (?,?,?,?,?,?,?,?)`
+  ).run(req.user.business_id, req.user.id, date, title, estimate, atTime, pos, nowISO());
+
+  res.json({ item: db.prepare('SELECT * FROM plan_items WHERE id = ?').get(info.lastInsertRowid) });
+}));
+
+// Marking done, skipping, retitling and reordering. Deleting is handled
+// separately because assigned work must not vanish silently.
+app.patch('/api/my/plan/:id', auth, wrap((req, res) => {
+  const item = db.prepare('SELECT * FROM plan_items WHERE id = ? AND user_id = ?')
+    .get(req.params.id, req.user.id);
+  if (!item) return res.status(404).json({ error: 'Task not found' });
+
+  if (req.body.status !== undefined) {
+    const s = String(req.body.status);
+    if (!['open', 'done', 'skipped'].includes(s)) {
+      return res.status(400).json({ error: 'Unknown status' });
+    }
+    db.prepare('UPDATE plan_items SET status = ?, done_at = ?, skip_reason = ? WHERE id = ?')
+      .run(s, s === 'done' ? nowISO() : null,
+           s === 'skipped' ? String(req.body.skip_reason || '').slice(0, 200) : '', item.id);
+  }
+
+  // An admin's wording stays the admin's. Estimates and timing are the
+  // person's own business either way.
+  if (req.body.title !== undefined && !item.assigned_by) {
+    const t = String(req.body.title).trim().slice(0, 200);
+    if (t) db.prepare('UPDATE plan_items SET title = ? WHERE id = ?').run(t, item.id);
+  }
+  if (req.body.estimate_min !== undefined) {
+    db.prepare('UPDATE plan_items SET estimate_min = ? WHERE id = ?')
+      .run(Math.max(5, Math.min(480, Number(req.body.estimate_min) || 30)), item.id);
+  }
+  if (req.body.at_time !== undefined) {
+    const t = req.body.at_time;
+    db.prepare('UPDATE plan_items SET at_time = ? WHERE id = ?')
+      .run(t && validAtTime(t) ? t : null, item.id);
+  }
+
+  res.json({ item: db.prepare('SELECT * FROM plan_items WHERE id = ?').get(item.id) });
+}));
+
+// Reorder is a whole-list operation: the client sends the ids in their new
+// order. Ignoring unknown ids keeps one stale tab from scrambling the list.
+app.post('/api/my/plan/reorder', auth, wrap((req, res) => {
+  const ids = Array.isArray(req.body.ids) ? req.body.ids.map(Number) : [];
+  const tz = req.business.tz_offset;
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(req.body.date || '') ? req.body.date : todayLocal(tz);
+
+  const mine = new Set(db.prepare(
+    'SELECT id FROM plan_items WHERE user_id = ? AND plan_date = ?'
+  ).all(req.user.id, date).map((r) => r.id));
+
+  let pos = 0;
+  for (const id of ids) if (mine.has(id)) {
+    db.prepare('UPDATE plan_items SET position = ? WHERE id = ?').run(pos++, id);
+  }
+  res.json(readPlan(req.user.id, req.user.business_id, date));
+}));
+
+// You can remove what you added. Work an admin assigned can only be skipped
+// with a reason, so nothing they asked for disappears without a trace.
+app.delete('/api/my/plan/:id', auth, wrap((req, res) => {
+  const item = db.prepare('SELECT * FROM plan_items WHERE id = ? AND user_id = ?')
+    .get(req.params.id, req.user.id);
+  if (!item) return res.status(404).json({ error: 'Task not found' });
+  if (item.assigned_by) {
+    return res.status(403).json({
+      error: `${item.assigned_by} assigned this. You can mark it done or skip it with a reason.`,
+    });
+  }
+  db.prepare('DELETE FROM plan_items WHERE id = ?').run(item.id);
+  res.json({ ok: true });
 }));
 
 // -------------------------------------------------------- business admin
@@ -640,10 +822,32 @@ app.get('/api/admin/stats', auth, businessAdmin, wrap((req, res) => {
     return ranked.length ? ranked[0].hour : null;
   }
 
+  // What each person planned across the range, so a card can show planned
+  // against actual. Skipped work is excluded — it was explicitly dropped, not
+  // silently missed.
+  const plannedByUser = {};
+  for (const p of db.prepare(
+    `SELECT user_id, SUM(estimate_min) AS planned, COUNT(*) AS items,
+            SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END) AS done
+       FROM plan_items
+      WHERE business_id = ? AND plan_date BETWEEN ? AND ? AND status != 'skipped'
+      GROUP BY user_id`
+  ).all(bizId, from, to)) plannedByUser[p.user_id] = p;
+
+  // A task that keeps sliding to tomorrow is either badly scoped or blocked.
+  // Both are worth a conversation, so surface them by name.
+  const stuckByUser = {};
+  for (const s of db.prepare(
+    `SELECT user_id, title, moved_count FROM plan_items
+      WHERE business_id = ? AND status = 'open' AND moved_count >= 2
+      ORDER BY moved_count DESC`
+  ).all(bizId)) (stuckByUser[s.user_id] ||= []).push({ title: s.title, movedCount: s.moved_count });
+
   const employees = Object.values(byUser)
     .map((u) => {
       const days = new Set(u.sessions.map((s) => localDate(s.started_at, tz)));
       const focusedMinutes = Math.round(u.sessions.reduce((a, s) => a + (s.actual_seconds || 0), 0) / 60);
+      const plan = plannedByUser[u.user_id];
       return {
         user_id: u.user_id, name: u.name, team: u.team,
         sessions: u.sessions.length,
@@ -655,10 +859,31 @@ app.get('/api/admin/stats', auth, businessAdmin, wrap((req, res) => {
         avgSessionMinutes: u.sessions.length ? Math.round(focusedMinutes / u.sessions.length) : 0,
         topDistraction: topOf(reasonsByUser[u.user_id]),
         bestHour: bestHourFor(u.sessions),
+        plannedMinutes: plan ? plan.planned : 0,
+        plannedItems: plan ? plan.items : 0,
+        plannedDone: plan ? plan.done : 0,
+        stuckTasks: stuckByUser[u.user_id] || [],
         ...scoreFor(u.sessions, u.distractions),
       };
     })
     .sort((a, b) => b.focusScore - a.focusScore);
+
+  // People who planned work but logged no sessions at all never appear in
+  // byUser, and quietly vanishing from the dashboard is exactly wrong.
+  for (const [uid, plan] of Object.entries(plannedByUser)) {
+    if (byUser[uid]) continue;
+    const who = db.prepare('SELECT name, team FROM users WHERE id = ?').get(Number(uid));
+    if (!who) continue;
+    employees.push({
+      user_id: Number(uid), name: who.name, team: who.team,
+      sessions: 0, completed: 0, focusedMinutes: 0, distractions: 0,
+      daysActive: 0, avgMinutesPerDay: 0, avgSessionMinutes: 0,
+      topDistraction: null, bestHour: null,
+      plannedMinutes: plan.planned, plannedItems: plan.items, plannedDone: plan.done,
+      stuckTasks: stuckByUser[uid] || [],
+      focusScore: null, completionRate: 0, distractionsPerHour: 0,
+    });
+  }
 
   const reasonCounts = {}, categoryCounts = {};
   for (const d of allDistractions) {
@@ -823,6 +1048,91 @@ app.post('/api/admin/logout-all', auth, businessAdmin, wrap((req, res) => {
   ).run(req.token, req.business.id);
   audit(`${req.business.slug}/${req.user.name}`, 'logout_all', `${info.changes} sessions ended`);
   res.json({ ok: true, endedSessions: info.changes });
+}));
+
+// ------------------------------------------------------ admin: assigning
+
+// A realistic day of focused work, used only to show an admin when they are
+// piling on more than fits. Nothing is blocked — it just becomes visible at
+// the moment of assigning rather than at review time.
+const REALISTIC_DAY_MIN = Number(process.env.REALISTIC_DAY_MINUTES || 300);
+
+const memberInBusiness = (id, businessId) =>
+  db.prepare("SELECT * FROM users WHERE id = ? AND business_id = ? AND role != 'master'")
+    .get(Number(id), businessId);
+
+app.get('/api/admin/plans', auth, businessAdmin, wrap((req, res) => {
+  const tz = req.business.tz_offset;
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(req.query.date || '') ? req.query.date : todayLocal(tz);
+
+  const people = db.prepare(
+    "SELECT id, name, team FROM users WHERE business_id = ? AND active = 1 AND role != 'master' ORDER BY name"
+  ).all(req.business.id);
+
+  res.json({
+    date,
+    realisticDayMinutes: REALISTIC_DAY_MIN,
+    people: people.map((p) => {
+      const plan = readPlan(p.id, req.business.id, date);
+      return {
+        id: p.id, name: p.name, team: p.team,
+        items: plan.items, totals: plan.totals,
+        assignedMinutes: plan.items
+          .filter((i) => i.assigned_by && i.status === 'open')
+          .reduce((a, i) => a + i.estimate_min, 0),
+        overloaded: plan.totals.plannedMinutes > REALISTIC_DAY_MIN,
+      };
+    }),
+  });
+}));
+
+app.post('/api/admin/plans', auth, businessAdmin, wrap((req, res) => {
+  const tz = req.business.tz_offset;
+  const member = memberInBusiness(req.body.user_id, req.business.id);
+  if (!member) return res.status(404).json({ error: 'No such team member' });
+
+  const title = String(req.body.title || '').trim().slice(0, 200);
+  if (!title) return res.status(400).json({ error: 'Give the task a name' });
+
+  const estimate = Math.max(5, Math.min(480, Number(req.body.estimate_min) || 30));
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(req.body.date || '') ? req.body.date : todayLocal(tz);
+  const atTime = req.body.at_time && validAtTime(req.body.at_time) ? req.body.at_time : null;
+
+  // Assigning into the past would land on a plan nobody will open again.
+  if (date < todayLocal(tz)) {
+    return res.status(400).json({ error: 'You cannot add work to a day that has passed' });
+  }
+
+  const pos = db.prepare(
+    'SELECT COALESCE(MAX(position), -1) p FROM plan_items WHERE user_id = ? AND plan_date = ?'
+  ).get(member.id, date).p + 1;
+
+  const info = db.prepare(
+    `INSERT INTO plan_items (business_id, user_id, plan_date, title, estimate_min,
+                             at_time, position, assigned_by, created_at)
+     VALUES (?,?,?,?,?,?,?,?,?)`
+  ).run(req.business.id, member.id, date, title, estimate, atTime, pos, req.user.name, nowISO());
+
+  const plan = readPlan(member.id, req.business.id, date);
+  res.json({
+    item: db.prepare('SELECT * FROM plan_items WHERE id = ?').get(info.lastInsertRowid),
+    totals: plan.totals,
+    overloaded: plan.totals.plannedMinutes > REALISTIC_DAY_MIN,
+    realisticDayMinutes: REALISTIC_DAY_MIN,
+  });
+}));
+
+// An admin can withdraw work they assigned. They cannot delete something the
+// person added for themselves — that plan is the person's own.
+app.delete('/api/admin/plans/:id', auth, businessAdmin, wrap((req, res) => {
+  const item = db.prepare('SELECT * FROM plan_items WHERE id = ? AND business_id = ?')
+    .get(req.params.id, req.business.id);
+  if (!item) return res.status(404).json({ error: 'Task not found' });
+  if (!item.assigned_by) {
+    return res.status(403).json({ error: 'That is their own task, not one you assigned' });
+  }
+  db.prepare('DELETE FROM plan_items WHERE id = ?').run(item.id);
+  res.json({ ok: true });
 }));
 
 app.get('/api/admin/settings', auth, businessAdmin, wrap((req, res) => {

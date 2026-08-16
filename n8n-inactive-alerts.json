@@ -3,28 +3,46 @@
   "nodes": [
     {
       "parameters": {
-        "rule": { "interval": [ { "field": "hours", "hoursInterval": 1 } ] }
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 1
+            }
+          ]
+        }
       },
       "id": "trigger",
       "name": "Every hour",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
-      "position": [ 0, 300 ]
+      "position": [
+        0,
+        300
+      ]
     },
     {
       "parameters": {
         "url": "https://focus.u2berclub.com/api/automation/alerts-due",
         "sendHeaders": true,
-        "headerParameters": { "parameters": [
-          { "name": "X-Api-Key", "value": "PASTE_YOUR_ALERTS_KEY" }
-        ] },
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Api-Key",
+              "value": "PASTE_YOUR_ALERTS_KEY"
+            }
+          ]
+        },
         "options": {}
       },
       "id": "fetch",
       "name": "Which workspaces are due",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [ 220, 300 ]
+      "position": [
+        220,
+        300
+      ]
     },
     {
       "parameters": {
@@ -35,30 +53,42 @@
       "name": "One item per workspace",
       "type": "n8n-nodes-base.splitOut",
       "typeVersion": 1,
-      "position": [ 440, 300 ]
+      "position": [
+        440,
+        300
+      ]
     },
     {
       "parameters": {
-        "sendTo": "={{ $json.contactEmail }}",
+        "fromEmail": "honestdigitalmarketer@gmail.com",
+        "toEmail": "={{ $json.contactEmail }}",
         "subject": "={{ $json.inactive.length }} on your team haven't logged a focus session",
-        "emailType": "text",
-        "message": "=Hi,\n\nThese people have not started a focus session in the last {{ $json.intervalHours }} hours:\n\n{{ $json.inactive.map(p => '  - ' + p.name + (p.team ? ' (' + p.team + ')' : '') + ' - last session: ' + (p.last_session_at ? p.last_session_at.slice(0,16).replace('T',' ') : 'never')).join('\\n') }}\n\nYour dashboard: https://focus.u2berclub.com/{{ $json.slug }}/admin\n\nTo change how often you get this, open the dashboard and go to Settings.\n\n- FocusTrack",
+        "emailFormat": "text",
+        "text": "=Hi,\n\nThese people have not started a focus session in the last {{ $json.intervalHours }} hours:\n\n{{ $json.inactive.map(p => '  - ' + p.name + (p.team ? ' (' + p.team + ')' : '') + ' - last session: ' + (p.last_session_at ? p.last_session_at.slice(0,16).replace('T',' ') : 'never')).join('\\n') }}\n\nYour dashboard: https://focus.u2berclub.com/{{ $json.slug }}/admin\n\nTo change how often you get this, open the dashboard and go to Settings.\n\n- FocusTrack",
         "options": {}
       },
       "id": "mail",
       "name": "Email the admin",
-      "type": "n8n-nodes-base.gmail",
+      "type": "n8n-nodes-base.emailSend",
       "typeVersion": 2.1,
-      "position": [ 660, 300 ]
+      "position": [
+        660,
+        300
+      ]
     },
     {
       "parameters": {
         "method": "POST",
         "url": "https://focus.u2berclub.com/api/automation/alerts-sent",
         "sendHeaders": true,
-        "headerParameters": { "parameters": [
-          { "name": "X-Api-Key", "value": "PASTE_YOUR_ALERTS_KEY" }
-        ] },
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Api-Key",
+              "value": "PASTE_YOUR_ALERTS_KEY"
+            }
+          ]
+        },
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ businessIds: $('One item per workspace').all().map(i => i.json.businessId) }) }}",
@@ -68,14 +98,59 @@
       "name": "Mark them as notified",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [ 880, 300 ]
+      "position": [
+        880,
+        300
+      ]
     }
   ],
   "connections": {
-    "Every hour": { "main": [ [ { "node": "Which workspaces are due", "type": "main", "index": 0 } ] ] },
-    "Which workspaces are due": { "main": [ [ { "node": "One item per workspace", "type": "main", "index": 0 } ] ] },
-    "One item per workspace": { "main": [ [ { "node": "Email the admin", "type": "main", "index": 0 } ] ] },
-    "Email the admin": { "main": [ [ { "node": "Mark them as notified", "type": "main", "index": 0 } ] ] }
+    "Every hour": {
+      "main": [
+        [
+          {
+            "node": "Which workspaces are due",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Which workspaces are due": {
+      "main": [
+        [
+          {
+            "node": "One item per workspace",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "One item per workspace": {
+      "main": [
+        [
+          {
+            "node": "Email the admin",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email the admin": {
+      "main": [
+        [
+          {
+            "node": "Mark them as notified",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
   },
-  "settings": { "executionOrder": "v1" }
+  "settings": {
+    "executionOrder": "v1"
+  }
 }

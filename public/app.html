@@ -56,6 +56,29 @@
   .quick button{background:#0f1218;border:1px solid var(--line);color:var(--dim);
     border-radius:20px;padding:8px 13px;font-size:13px}
   @media(min-width:520px){.modal{align-items:center}}
+
+  /* --- today's plan --- */
+  .planhead{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px}
+  .pi{display:flex;align-items:flex-start;gap:10px;padding:11px 0;border-bottom:1px solid var(--line)}
+  .pi:last-of-type{border-bottom:none}
+  .pi .tick{width:19px;height:19px;flex:none;margin-top:2px;border:1.5px solid var(--line);
+    border-radius:6px;background:#0f1218;cursor:pointer;padding:0;font-size:12px;line-height:1;color:var(--accent)}
+  .pi.done .tick{background:var(--accent);border-color:var(--accent);color:#04101f}
+  .pi .body{flex:1;min-width:0}
+  .pi .t{font-size:14px;line-height:1.4;word-break:break-word}
+  .pi.done .t{text-decoration:line-through;color:var(--dim)}
+  .pi .meta{font-size:11px;color:var(--dim);margin-top:3px;display:flex;flex-wrap:wrap;gap:8px}
+  .pi .tag{border:1px solid var(--line);border-radius:5px;padding:1px 5px}
+  .pi .tag.warn{color:#f0b23a;border-color:#5a4520}
+  .pi .tag.fix{color:var(--accent);border-color:#28425f}
+  .pi .go{flex:none;background:#0f1218;border:1px solid var(--line);color:var(--accent);
+    border-radius:8px;padding:7px 12px;font-size:12px;font-weight:600;cursor:pointer}
+  .pi .kill{flex:none;background:transparent;border:none;color:var(--dim);font-size:16px;
+    cursor:pointer;padding:4px 2px;line-height:1}
+  .planadd{display:flex;gap:7px;margin-top:12px}
+  .planadd input{flex:1;padding:11px 12px;font-size:14px;margin:0}
+  .planadd select{width:auto;padding:11px 8px;font-size:13px;margin:0}
+  .planempty{color:var(--dim);font-size:13px;line-height:1.5;padding:4px 0 2px}
 </style>
 </head>
 <body>
@@ -87,6 +110,26 @@
         <a href="#" id="adminLink" class="hidden">Dashboard</a>
         <a href="#" id="logout">Sign out</a>
       </div>
+    </div>
+
+    <div class="card" id="planCard">
+      <div class="planhead">
+        <label style="margin:0">Today's plan</label>
+        <span class="muted" style="font-size:12px" id="planTotal"></span>
+      </div>
+      <div id="planList"></div>
+      <div class="planadd">
+        <input id="planTitle" placeholder="Add a task for today">
+        <select id="planEst">
+          <option value="15">15m</option>
+          <option value="30" selected>30m</option>
+          <option value="45">45m</option>
+          <option value="60">1h</option>
+          <option value="120">2h</option>
+        </select>
+        <button class="btn sm" id="planAdd">Add</button>
+      </div>
+      <div class="err" id="planErr"></div>
     </div>
 
     <div class="card" id="startCard">
@@ -128,6 +171,13 @@
       <div style="font-size:44px">🎉</div>
       <h1 id="doneTitle" style="margin:8px 0">Session complete</h1>
       <p class="sub" id="doneSub" style="margin-bottom:0"></p>
+      <div id="donePlan" class="hidden" style="margin-top:16px;padding-top:16px;border-top:1px solid var(--line)">
+        <p style="font-size:14px;margin:0 0 10px" id="donePlanText"></p>
+        <div class="row">
+          <button class="btn ghost sm" id="donePlanNo">Not yet</button>
+          <button class="btn good sm" id="donePlanYes">Yes, done</button>
+        </div>
+      </div>
       <button class="btn" id="againBtn">Start another</button>
     </div>
 
@@ -237,24 +287,31 @@ $('#chips').onclick = (e) => {
   planned = Number(c.dataset.m);
 };
 
-$('#startBtn').onclick = async () => {
+// Set when a session is started from a plan item, so the time it takes gets
+// counted against what was planned. Cleared for anything typed freely.
+let planItemId = null;
+
+$('#startBtn').onclick = () => startSession($('#task').value, planned, null);
+
+async function startSession(task, minutes, itemId) {
   $('#startErr').textContent = '';
   try {
     const d = await api('/api/sessions/start', {
       method: 'POST',
-      body: JSON.stringify({ task: $('#task').value, planned_minutes: planned }),
+      body: JSON.stringify({ task, planned_minutes: minutes, plan_item_id: itemId }),
     });
     skew = Date.now() - new Date(d.serverTime).getTime();
-    session = d.session; distractions = 0;
+    session = d.session; distractions = 0; planItemId = itemId;
     showRunning();
   } catch (e) { $('#startErr').textContent = e.message; }
-};
+}
 
 // ---------- running ----------
 function showRunning() {
   $('#startCard').classList.add('hidden');
   $('#doneCard').classList.add('hidden');
   $('#recentCard').classList.add('hidden');
+  $('#planCard').classList.add('hidden');
   $('#runCard').classList.remove('hidden');
   $('#taskNow').textContent = session.task;
   updateDistLine();
@@ -334,15 +391,153 @@ async function finish(kind, auto) {
     ? (auto ? 'Time’s up!' : 'Marked done') : 'Session stopped';
   $('#doneSub').textContent =
     `${mins} min focused · ${distractions} distraction${distractions === 1 ? '' : 's'}`;
+
+  // Finishing a block doesn't necessarily finish the task, so ask rather than
+  // assume. Guessing either way would corrupt the planned-vs-actual figures.
+  const finishedItem = planItemId;
+  planItemId = null;
+  $('#donePlan').classList.add('hidden');
+  if (finishedItem && kind === 'complete') {
+    const item = (planCache || []).find((i) => i.id === finishedItem);
+    if (item && item.status === 'open') {
+      $('#donePlanText').textContent = `Is "${item.title}" finished?`;
+      $('#donePlan').classList.remove('hidden');
+      $('#donePlanYes').onclick = async () => {
+        try { await api('/api/my/plan/' + finishedItem, { method: 'PATCH', body: JSON.stringify({ status: 'done' }) }); }
+        catch {}
+        $('#donePlan').classList.add('hidden');
+        loadPlan();
+      };
+      $('#donePlanNo').onclick = () => $('#donePlan').classList.add('hidden');
+    }
+  }
+
   loadToday();
+  loadPlan();
 }
 
 $('#againBtn').onclick = () => {
   $('#doneCard').classList.add('hidden');
   $('#startCard').classList.remove('hidden');
+  $('#planCard').classList.remove('hidden');
   $('#task').value = '';
   $('#task').focus();
 };
+
+// ---------- today's plan ----------
+let planCache = [];
+
+const fmtMins = (m) => (m >= 60
+  ? (m % 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${Math.floor(m / 60)}h`)
+  : `${m}m`);
+
+// 15:00 -> 3pm. People read their own plan faster in the format they speak.
+function clock(hhmm) {
+  const [h, m] = hhmm.split(':').map(Number);
+  const suffix = h < 12 ? 'am' : 'pm';
+  const hour = h % 12 === 0 ? 12 : h % 12;
+  return m ? `${hour}:${String(m).padStart(2, '0')}${suffix}` : `${hour}${suffix}`;
+}
+
+async function loadPlan() {
+  try {
+    const d = await api('/api/my/plan');
+    planCache = d.items;
+    const open = d.items.filter((i) => i.status === 'open');
+
+    $('#planTotal').textContent = d.items.length
+      ? (open.length ? `${fmtMins(d.totals.plannedMinutes)} left · ${d.totals.done}/${d.totals.items} done`
+                     : `All ${d.totals.items} done`)
+      : '';
+
+    if (!d.items.length) {
+      $('#planList').innerHTML =
+        '<div class="planempty">Nothing planned yet. Add what you want to get through today — ' +
+        'then start the timer straight from the list.</div>';
+      return;
+    }
+
+    $('#planList').innerHTML = d.items.map((i) => {
+      const isDone = i.status !== 'open';
+      const tags = [];
+      if (i.at_time) tags.push(`<span class="tag fix">${clock(i.at_time)}</span>`);
+      tags.push(`<span>${fmtMins(i.estimate_min)}</span>`);
+      if (i.actual_seconds > 0) tags.push(`<span>${fmtMins(Math.round(i.actual_seconds / 60))} logged</span>`);
+      if (i.assigned_by) tags.push(`<span class="tag">from ${escapeHtml(i.assigned_by)}</span>`);
+      if (i.moved_count === 1) tags.push('<span class="tag warn">moved once</span>');
+      else if (i.moved_count > 1) tags.push(`<span class="tag warn">moved ${i.moved_count}×</span>`);
+      if (i.status === 'skipped') tags.push('<span class="tag">skipped</span>');
+
+      return `<div class="pi ${isDone ? 'done' : ''}" data-id="${i.id}">
+        <button class="tick" data-act="toggle" title="Mark done">${isDone ? '✓' : ''}</button>
+        <div class="body">
+          <div class="t">${escapeHtml(i.title)}</div>
+          <div class="meta">${tags.join('')}</div>
+        </div>
+        ${i.status === 'open'
+          ? `<button class="go" data-act="start">Start</button>`
+          : ''}
+        ${i.assigned_by ? '' : '<button class="kill" data-act="del" title="Remove">×</button>'}
+      </div>`;
+    }).join('');
+  } catch {}
+}
+
+$('#planList').onclick = async (e) => {
+  const btn = e.target.closest('button');
+  if (!btn) return;
+  const id = Number(btn.closest('.pi').dataset.id);
+  const item = planCache.find((i) => i.id === id);
+  if (!item) return;
+  $('#planErr').textContent = '';
+
+  try {
+    if (btn.dataset.act === 'start') {
+      // Round the estimate to the nearest offered block; the timer only knows
+      // 15/30/45/60.
+      const opts = [15, 30, 45, 60];
+      const mins = opts.reduce((a, b) =>
+        Math.abs(b - item.estimate_min) < Math.abs(a - item.estimate_min) ? b : a);
+      await startSession(item.title, mins, item.id);
+      return;
+    }
+
+    if (btn.dataset.act === 'toggle') {
+      // Skipping someone else's assigned work needs a reason — that's the
+      // trade for not being able to delete it.
+      if (item.status === 'open' && item.assigned_by) {
+        const why = prompt(`${item.assigned_by} assigned this. Mark it done, or leave a note to skip it.\n\nLeave blank to mark done:`);
+        if (why === null) return;
+        if (why.trim()) {
+          await api('/api/my/plan/' + id, { method: 'PATCH',
+            body: JSON.stringify({ status: 'skipped', skip_reason: why.trim() }) });
+          return loadPlan();
+        }
+      }
+      await api('/api/my/plan/' + id, { method: 'PATCH',
+        body: JSON.stringify({ status: item.status === 'open' ? 'done' : 'open' }) });
+      return loadPlan();
+    }
+
+    if (btn.dataset.act === 'del') {
+      await api('/api/my/plan/' + id, { method: 'DELETE' });
+      return loadPlan();
+    }
+  } catch (err) { $('#planErr').textContent = err.message; }
+};
+
+$('#planAdd').onclick = async () => {
+  const title = $('#planTitle').value.trim();
+  $('#planErr').textContent = '';
+  if (!title) return $('#planTitle').focus();
+  try {
+    await api('/api/my/plan', { method: 'POST',
+      body: JSON.stringify({ title, estimate_min: Number($('#planEst').value) }) });
+    $('#planTitle').value = '';
+    loadPlan();
+  } catch (e) { $('#planErr').textContent = e.message; }
+};
+$('#planTitle').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#planAdd').click(); });
 
 // ---------- today ----------
 async function loadToday() {
@@ -385,9 +580,11 @@ async function boot() {
     skew = Date.now() - new Date(active.serverTime).getTime();
     session = active.session;
     distractions = active.distractions.length;
+    planItemId = active.session.plan_item_id || null;
     showRunning();
   }
   loadToday();
+  loadPlan();
 }
 
 // ---------- install to home screen ----------

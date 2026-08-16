@@ -94,11 +94,19 @@ Open **Which workspaces are due**, find the `X-Api-Key` header, replace
 `PASTE_YOUR_ALERTS_KEY` with your key. Do the same in **Mark them as
 notified**. Both nodes need it.
 
-### 3. Connect Gmail
+### 3. Connect email
 
-Open **Email the admin** and pick your Gmail credential. If you haven't made
-one, n8n walks you through Google sign-in. This is a normal OAuth connection —
-nothing to do with the app password you set up for the app itself.
+Open **Email the admin** → **Create new credential**, and fill in:
+
+- **User:** `honestdigitalmarketer@gmail.com`
+- **Password:** the Gmail **app password** from the security setup
+- **Host:** `smtp.gmail.com`
+- **Port:** `465`, with **SSL/TLS** on
+
+This is the plain SMTP node, deliberately. n8n's *Gmail* node uses OAuth and
+wants a Google Cloud project, consent screen, client ID and secret — fifteen
+minutes of setup to do what the app password already does. If a screen asks
+for **Client ID**, you're on the wrong node.
 
 ### 4. Test before switching it on
 

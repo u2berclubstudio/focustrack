@@ -216,6 +216,38 @@ CREATE TABLE IF NOT EXISTS tokens (
 );
 `);
 
+// --- day planner ----------------------------------------------------------
+// One row per task on one person's plan for one day. `plan_date` is the
+// business-local date, not UTC, so a plan doesn't jump at midnight GMT.
+//
+// `at_time` is optional: most items are just ordered, but a 3pm client call is
+// genuinely fixed and needs to say so.
+//
+// `moved_from` / `moved_count` carry an unfinished task forward. Keeping the
+// count visible is the point — a task on its fifth day is a conversation, not
+// something to hide.
+db.exec(`
+CREATE TABLE IF NOT EXISTS plan_items (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  business_id   INTEGER NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+  user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  plan_date     TEXT NOT NULL,                    -- YYYY-MM-DD, business-local
+  title         TEXT NOT NULL,
+  estimate_min  INTEGER NOT NULL DEFAULT 30,
+  at_time       TEXT DEFAULT NULL,                -- 'HH:MM' when fixed
+  position      INTEGER NOT NULL DEFAULT 0,
+  status        TEXT NOT NULL DEFAULT 'open',     -- open | done | skipped
+  skip_reason   TEXT DEFAULT '',
+  assigned_by   TEXT DEFAULT NULL,                -- admin name, NULL if self-added
+  moved_from    TEXT DEFAULT NULL,                -- the date it first appeared
+  moved_count   INTEGER NOT NULL DEFAULT 0,
+  created_at    TEXT NOT NULL,
+  done_at       TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_plan_user_date ON plan_items(user_id, plan_date);
+CREATE INDEX IF NOT EXISTS idx_plan_business  ON plan_items(business_id, plan_date);
+`);
+
 // --- login security -------------------------------------------------------
 db.exec(`
 CREATE TABLE IF NOT EXISTS login_guard (
@@ -250,6 +282,9 @@ addColumn('tokens', 'impersonated_by', 'TEXT DEFAULT NULL');
 addColumn('businesses', 'last_active_at', 'TEXT');
 addColumn('businesses', 'notification_interval', 'INTEGER DEFAULT 6');
 addColumn('businesses', 'last_inactive_notification_sent_at', 'TEXT');
+// Links a timed session back to the plan item it came from. NULL for anything
+// typed freely, which is most unplanned work and perfectly fine.
+addColumn('sessions', 'plan_item_id', 'INTEGER');
 
 db.exec(`
 CREATE INDEX IF NOT EXISTS idx_sessions_user     ON sessions(user_id);
