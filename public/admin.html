@@ -113,6 +113,7 @@
     <button class="tab on" data-tab="overview">Overview</button>
     <button class="tab" data-tab="details">Details</button>
     <button class="tab" data-tab="team">Team</button>
+    <button class="tab" data-tab="settings">Settings</button>
   </div>
 
   <!-- ================= OVERVIEW ================= -->
@@ -192,6 +193,38 @@
       </div>
       <button class="btn bad sm" id="logoutAll">Sign everyone out</button>
       <span class="ok" id="logoutAllMsg" style="margin-left:10px"></span>
+    </div>
+  </div>
+
+  <!-- ================= SETTINGS ================= -->
+  <div id="tab-settings" class="hidden">
+    <div class="card">
+      <h2>INACTIVE MEMBER ALERTS</h2>
+      <div class="muted" style="font-size:13px;line-height:1.6;margin-bottom:14px">
+        Get notified when team members haven't logged a focus session. Choose how often you want to be reminded.
+      </div>
+      <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center">
+        <div style="flex:1;min-width:200px">
+          <label style="display:block;margin-bottom:8px;font-weight:600;font-size:14px">Notify me every:</label>
+          <select id="notifInterval" style="width:100%;padding:12px;border:1px solid var(--line);border-radius:8px;font-size:14px;background:var(--card);color:var(--txt)">
+            <option value="1">1 hour</option>
+            <option value="3">3 hours</option>
+            <option value="6" selected>6 hours (recommended)</option>
+            <option value="12">12 hours</option>
+          </select>
+        </div>
+        <button class="btn" id="saveNotifInterval" style="margin-top:30px">Save</button>
+        <span class="ok" id="notifMsg" style="margin-top:30px"></span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>ABOUT THIS AUTOMATION</h2>
+      <div class="muted" style="font-size:13px;line-height:1.6">
+        Notifications are sent via n8n automation. The system checks every hour whether any team members have logged sessions. If inactive members are found and enough time has passed since the last notification, an email is sent to your workspace contact email.
+        <br><br>
+        <strong>Set up n8n:</strong> See the N8N_WORKFLOW.md file in the FocusTrack repository for detailed setup instructions.
+      </div>
     </div>
   </div>
 </div>
@@ -285,9 +318,10 @@ document.querySelector('.tabs').onclick = (e) => {
   const t = e.target.closest('.tab');
   if (!t) return;
   document.querySelectorAll('.tab').forEach((x) => x.classList.toggle('on', x === t));
-  for (const n of ['overview', 'details', 'team']) {
+  for (const n of ['overview', 'details', 'team', 'settings']) {
     $('#tab-' + n).classList.toggle('hidden', n !== t.dataset.tab);
   }
+  if (t.dataset.tab === 'settings') loadSettings();
 };
 
 $('#csv').onclick = async (e) => {
@@ -489,6 +523,26 @@ $('#addUser').onclick = async () => {
     $('#nName').value = $('#nPin').value = $('#nTeam').value = '';
     loadUsers();
   } catch (e) { $('#userErr').textContent = e.message; }
+};
+
+async function loadSettings() {
+  try {
+    const d = await api('/api/admin/settings');
+    $('#notifInterval').value = d.notification_interval || 6;
+    $('#notifMsg').textContent = '';
+  } catch (e) { console.error(e); }
+}
+
+$('#saveNotifInterval').onclick = async () => {
+  try {
+    const interval = Number($('#notifInterval').value);
+    await api('/api/admin/settings', {
+      method: 'PATCH',
+      body: JSON.stringify({ notification_interval: interval }),
+    });
+    $('#notifMsg').textContent = 'Saved!';
+    setTimeout(() => { $('#notifMsg').textContent = ''; }, 3000);
+  } catch (e) { $('#notifMsg').textContent = e.message; }
 };
 
 (async () => {

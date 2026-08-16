@@ -63,8 +63,8 @@ Environment=NODE_OPTIONS=--no-warnings
 Environment=SMTP_HOST=smtp.gmail.com
 Environment=SMTP_PORT=465
 Environment=SMTP_USER=honestdigitalmarketer@gmail.com
-Environment=SMTP_PASS=PASTE_APP_PASSWORD_HERE
-Environment=MAIL_FROM=FocusTrack <honestdigitalmarketer@gmail.com>
+Environment="SMTP_PASS=PASTE_APP_PASSWORD_HERE"
+Environment="MAIL_FROM=FocusTrack <honestdigitalmarketer@gmail.com>"
 ExecStart=/usr/bin/node server.js
 Restart=always
 RestartSec=5

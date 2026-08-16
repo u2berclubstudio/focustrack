@@ -248,6 +248,8 @@ addColumn('sessions', 'business_id', 'INTEGER');
 addColumn('distractions', 'business_id', 'INTEGER');
 addColumn('tokens', 'impersonated_by', 'TEXT DEFAULT NULL');
 addColumn('businesses', 'last_active_at', 'TEXT');
+addColumn('businesses', 'notification_interval', 'INTEGER DEFAULT 6');
+addColumn('businesses', 'last_inactive_notification_sent_at', 'TEXT');
 
 db.exec(`
 CREATE INDEX IF NOT EXISTS idx_sessions_user     ON sessions(user_id);

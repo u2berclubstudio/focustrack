@@ -825,6 +825,15 @@ app.post('/api/admin/logout-all', auth, businessAdmin, wrap((req, res) => {
   res.json({ ok: true, endedSessions: info.changes });
 }));
 
+app.get('/api/admin/settings', auth, businessAdmin, wrap((req, res) => {
+  const biz = db.prepare('SELECT * FROM businesses WHERE id = ?').get(req.business.id);
+  res.json({
+    tz_offset: biz.tz_offset,
+    name: biz.name,
+    notification_interval: biz.notification_interval || 6,
+  });
+}));
+
 app.patch('/api/admin/settings', auth, businessAdmin, wrap((req, res) => {
   if (req.body.tz_offset !== undefined) {
     const tz = Number(req.body.tz_offset);
@@ -837,7 +846,44 @@ app.patch('/api/admin/settings', auth, businessAdmin, wrap((req, res) => {
     db.prepare('UPDATE businesses SET name = ? WHERE id = ?')
       .run(String(req.body.name).trim().slice(0, 80), req.business.id);
   }
+  if (req.body.notification_interval !== undefined) {
+    const interval = Number(req.body.notification_interval);
+    if (![1, 3, 6, 12].includes(interval)) {
+      return res.status(400).json({ error: 'Invalid interval (must be 1, 3, 6, or 12)' });
+    }
+    db.prepare('UPDATE businesses SET notification_interval = ? WHERE id = ?')
+      .run(interval, req.business.id);
+  }
   res.json({ ok: true });
+}));
+
+// Who has not started a session in the last N hours. This is what the
+// reminder email is built from, so it also carries when each person was last
+// seen at all — "hasn't logged since Tuesday" is the bit an admin acts on.
+app.get('/api/admin/inactive-members', auth, businessAdmin, wrap((req, res) => {
+  const hours = Math.max(1, Math.min(168, Number(req.query.hours) || 1));
+  const since = new Date(Date.now() - hours * 3600000).toISOString();
+
+  const members = db.prepare(`
+    SELECT u.id, u.name, u.team, u.email,
+           (SELECT MAX(started_at) FROM sessions WHERE user_id = u.id) AS last_session_at
+      FROM users u
+     WHERE u.business_id = ?
+       AND u.active = 1
+       AND u.role != 'master'
+       AND NOT EXISTS (
+         SELECT 1 FROM sessions s
+          WHERE s.user_id = u.id AND s.started_at > ?
+       )
+     ORDER BY u.name
+  `).all(req.business.id, since);
+
+  res.json({
+    business: { name: req.business.name, slug: req.business.slug,
+                contact_email: req.business.contact_email },
+    inactive: members,
+    checkHours: hours,
+  });
 }));
 
 // ----------------------------------------------------------- master admin
@@ -1005,6 +1051,74 @@ app.post('/api/master/businesses/:id/impersonate', auth, masterOnly, wrap((req, 
 
 app.get('/api/master/audit', auth, masterOnly, wrap((req, res) => {
   res.json({ entries: db.prepare('SELECT * FROM audit_log ORDER BY id DESC LIMIT 200').all() });
+}));
+
+// ------------------------------------------------------- automation (n8n)
+// n8n cannot sign in as master: that needs an emailed code, and the token
+// would expire every 30 days. So automation gets its own long-lived key,
+// set in the service file. Unset means the whole automation surface is off.
+const ALERTS_KEY = process.env.ALERTS_API_KEY || '';
+
+function automationOnly(req, res, next) {
+  if (!ALERTS_KEY) {
+    return res.status(503).json({ error: 'Automation is not enabled on this server' });
+  }
+  const given = String(req.get('X-Api-Key') || '');
+  const a = Buffer.from(given.padEnd(64).slice(0, 64));
+  const b = Buffer.from(ALERTS_KEY.padEnd(64).slice(0, 64));
+  if (!crypto.timingSafeEqual(a, b)) return res.status(401).json({ error: 'Bad key' });
+  next();
+}
+
+// One call answers the whole question: which workspaces are due a reminder
+// right now, and who should be named in it. Doing the date maths here rather
+// than in n8n keeps the workflow to a handful of nodes.
+app.get('/api/automation/alerts-due', automationOnly, wrap((req, res) => {
+  const now = Date.now();
+  const due = [];
+
+  for (const b of db.prepare("SELECT * FROM businesses WHERE status = 'active'").all()) {
+    const hours = [1, 3, 6, 12].includes(b.notification_interval) ? b.notification_interval : 6;
+    const last = b.last_inactive_notification_sent_at;
+    if (last && (now - new Date(last).getTime()) < hours * 3600000) continue;
+
+    const since = new Date(now - hours * 3600000).toISOString();
+    const inactive = db.prepare(`
+      SELECT u.name, u.team,
+             (SELECT MAX(started_at) FROM sessions WHERE user_id = u.id) AS last_session_at
+        FROM users u
+       WHERE u.business_id = ? AND u.active = 1 AND u.role != 'master'
+         AND NOT EXISTS (SELECT 1 FROM sessions s WHERE s.user_id = u.id AND s.started_at > ?)
+       ORDER BY u.name
+    `).all(b.id, since);
+
+    // Nothing to say, but still stamp it so we re-check on the next cycle
+    // rather than every single hour.
+    if (!inactive.length) continue;
+    if (!b.contact_email) continue;
+
+    due.push({
+      businessId: b.id, name: b.name, slug: b.slug,
+      contactEmail: b.contact_email, intervalHours: hours, inactive,
+    });
+  }
+  res.json({ due, checkedAt: nowISO() });
+}));
+
+// n8n calls this after the emails actually go out, so a failed send is
+// retried next hour instead of being silently skipped.
+app.post('/api/automation/alerts-sent', automationOnly, wrap((req, res) => {
+  const ids = Array.isArray(req.body.businessIds) ? req.body.businessIds : [];
+  const stamp = nowISO();
+  let n = 0;
+  for (const raw of ids) {
+    const id = Number(raw);
+    if (!Number.isInteger(id)) continue;
+    n += db.prepare('UPDATE businesses SET last_inactive_notification_sent_at = ? WHERE id = ?')
+      .run(stamp, id).changes;
+  }
+  if (n) audit('automation', 'inactive_alerts_sent', `${n} workspace(s)`);
+  res.json({ ok: true, updated: n });
 }));
 
 // ------------------------------------------------------------------ pages
