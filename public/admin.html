@@ -248,6 +248,41 @@
     </div>
 
     <div class="card">
+      <h2>END OF DAY REPORT</h2>
+      <div class="muted" style="font-size:13px;line-height:1.6;margin-bottom:14px">
+        A summary of the day emailed to you: what each person planned, what they
+        actually did, and which of the tasks you assigned got finished.
+      </div>
+      <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end">
+        <div style="flex:1;min-width:200px">
+          <label style="display:block;margin-bottom:8px;font-weight:600;font-size:14px">Send it at</label>
+          <select id="reportHour" style="width:100%;padding:12px;border:1px solid var(--line);border-radius:8px;font-size:14px;background:var(--card);color:var(--txt)">
+            <option value="">Don't send it</option>
+            <option value="15">3pm</option>
+            <option value="16">4pm</option>
+            <option value="17">5pm</option>
+            <option value="18" selected>6pm</option>
+            <option value="19">7pm</option>
+            <option value="20">8pm</option>
+            <option value="21">9pm</option>
+          </select>
+        </div>
+        <div style="flex:1;min-width:200px">
+          <label style="display:block;margin-bottom:8px;font-weight:600;font-size:14px">Send it to</label>
+          <input id="reportEmail" type="email" placeholder="you@company.com"
+                 style="width:100%;padding:12px;font-size:14px;margin:0">
+        </div>
+        <button class="btn" id="saveReport" style="width:auto">Save</button>
+      </div>
+      <div style="margin-top:14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <button class="btn ghost sm" id="previewReport" style="width:auto">Show me today's report</button>
+        <span class="ok" id="reportMsg"></span>
+      </div>
+      <pre id="reportPreview" class="hidden" style="margin-top:14px;background:#0f1218;border:1px solid var(--line);
+        border-radius:10px;padding:14px;font-size:12px;line-height:1.6;overflow-x:auto;white-space:pre-wrap"></pre>
+    </div>
+
+    <div class="card">
       <h2>ABOUT THIS AUTOMATION</h2>
       <div class="muted" style="font-size:13px;line-height:1.6">
         Notifications are sent via n8n automation. The system checks every hour whether any team members have logged sessions. If inactive members are found and enough time has passed since the last notification, an email is sent to your workspace contact email.
@@ -701,8 +736,97 @@ async function loadSettings() {
   try {
     const d = await api('/api/admin/settings');
     $('#notifInterval').value = d.notification_interval || 6;
+    $('#reportHour').value = (d.daily_report_hour === null || d.daily_report_hour === undefined)
+      ? '' : String(d.daily_report_hour);
+    $('#reportEmail').value = d.contact_email || '';
     $('#notifMsg').textContent = '';
+    $('#reportMsg').textContent = '';
   } catch (e) { console.error(e); }
+}
+
+$('#saveReport').onclick = async () => {
+  $('#reportMsg').textContent = '';
+  try {
+    await api('/api/admin/settings', {
+      method: 'PATCH',
+      body: JSON.stringify({
+        daily_report_hour: $('#reportHour').value === '' ? null : Number($('#reportHour').value),
+        contact_email: $('#reportEmail').value.trim(),
+      }),
+    });
+    $('#reportMsg').textContent = $('#reportHour').value === '' ? 'Report switched off.' : 'Saved.';
+    setTimeout(() => { $('#reportMsg').textContent = ''; }, 4000);
+  } catch (e) { $('#reportMsg').textContent = e.message; }
+};
+
+// Nobody should have to switch on a daily email to find out what it says.
+$('#previewReport').onclick = async () => {
+  const box = $('#reportPreview');
+  if (!box.classList.contains('hidden')) { box.classList.add('hidden'); return; }
+  $('#reportMsg').textContent = '';
+  try {
+    const r = await api('/api/admin/daily-report');
+    box.textContent = renderReport(r);
+    box.classList.remove('hidden');
+  } catch (e) { $('#reportMsg').textContent = e.message; }
+};
+
+// This must produce byte-for-byte what the n8n workflow emails — a preview
+// that differs from the real thing is worse than no preview, because an admin
+// tunes the report against something that never arrives. test-ui.js compares
+// the two outputs directly, so any drift fails the build.
+//
+// Note it uses its own `mins`, not the dashboard's fmtMin: the dashboard says
+// "25 min" and the email says "25m".
+function renderReport(d) {
+  const mins = (m) => (m >= 60
+    ? (m % 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${Math.floor(m / 60)}h`)
+    : `${m}m`);
+  const t = d.totals;
+  const L = [];
+
+  L.push(`${t.activePeople} of ${t.people} people worked. ` +
+         `Planned ${mins(t.plannedMinutes)}, logged ${mins(t.loggedMinutes)} across ${t.sessions} sessions.`);
+  if (t.assignedTotal) L.push(`Of the work you assigned, ${t.assignedDone} of ${t.assignedTotal} got done.`);
+  if (t.distractions) L.push(`${t.distractions} interruption${t.distractions === 1 ? '' : 's'} logged.`);
+  L.push('');
+
+  for (const p of d.people) {
+    if (p.quiet) continue;
+    L.push('----------------------------------------');
+    L.push(p.name + (p.team ? `  (${p.team})` : ''));
+    if (p.planned) {
+      L.push(`  planned ${mins(p.plannedMinutes)}   logged ${mins(p.loggedMinutes)}   ${p.done} of ${p.planned} tasks done`);
+      if (p.assignedTotal) L.push(`  your tasks: ${p.assignedDone} of ${p.assignedTotal} done`);
+    } else {
+      L.push(`  logged ${mins(p.loggedMinutes)} across ${p.sessions} session${p.sessions === 1 ? '' : 's'} — nothing was planned`);
+    }
+    L.push('');
+    for (const i of p.items) {
+      const mark = i.status === 'done' ? '[x]' : (i.status === 'skipped' ? '[-]' : '[ ]');
+      const bits = [`${mins(i.estimateMin)} planned`];
+      if (i.actualMin > 0) bits.push(`${mins(i.actualMin)} actual`);
+      if (i.assignedBy) bits.push('you assigned');
+      if (i.movedCount > 0) bits.push(`moved ${i.movedCount}x`);
+      L.push(`  ${mark} ${i.title}   (${bits.join(', ')})`);
+      if (i.status === 'skipped' && i.skipReason) L.push(`        skipped: ${i.skipReason}`);
+    }
+    if (p.unplannedSessions && p.items.length) {
+      L.push(`  + ${mins(p.unplannedMinutes)} on ${p.unplannedSessions} unplanned session${p.unplannedSessions === 1 ? '' : 's'}`);
+    }
+    L.push('');
+  }
+
+  const quiet = d.people.filter((p) => p.quiet);
+  if (quiet.length) {
+    L.push('----------------------------------------');
+    L.push('NO ACTIVITY AT ALL');
+    L.push('  ' + quiet.map((p) => p.name).join(', '));
+    L.push('  Nothing planned and no timer use. May be off today.');
+    L.push('');
+  }
+  L.push('----------------------------------------');
+  return L.join('\n');
 }
 
 $('#saveNotifInterval').onclick = async () => {

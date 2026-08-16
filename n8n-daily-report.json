@@ -1,0 +1,156 @@
+{
+  "name": "FocusTrack - end of day report",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "trig",
+      "name": "Every hour",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://focus.u2berclub.com/api/automation/reports-due",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Api-Key",
+              "value": "PASTE_YOUR_ALERTS_KEY"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "fetch",
+      "name": "Which reports are due",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        220,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "due",
+        "options": {}
+      },
+      "id": "split",
+      "name": "One item per workspace",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        440,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "fromEmail": "honestdigitalmarketer@gmail.com",
+        "toEmail": "={{ $json.business.contactEmail }}",
+        "subject": "={{ $json.business.name }} \u2014 day report \u2014 {{ $json.date }}",
+        "emailFormat": "text",
+        "text": "=FocusTrack \u2014 {{ $json.business.name }} \u2014 {{ new Date($json.date).toLocaleDateString('en-GB',{weekday:'long',day:'numeric',month:'long'}) }}\n\n{{ (() => {\n  const t = $json.totals;\n  const mins = m => m >= 60 ? (m % 60 ? Math.floor(m/60)+'h '+(m%60)+'m' : Math.floor(m/60)+'h') : m+'m';\n  const L = [];\n\n  L.push('THE DAY IN ONE LINE');\n  L.push(t.activePeople + ' of ' + t.people + ' people worked. Planned ' + mins(t.plannedMinutes) + ', logged ' + mins(t.loggedMinutes) + ' across ' + t.sessions + ' sessions.');\n  if (t.assignedTotal) L.push('Of the work you assigned, ' + t.assignedDone + ' of ' + t.assignedTotal + ' got done.');\n  if (t.distractions) L.push(t.distractions + ' interruption' + (t.distractions === 1 ? '' : 's') + ' logged.');\n  L.push('');\n\n  for (const p of $json.people) {\n    if (p.quiet) continue;\n    L.push('----------------------------------------');\n    L.push(p.name + (p.team ? '  (' + p.team + ')' : ''));\n    if (p.planned) {\n      L.push('  planned ' + mins(p.plannedMinutes) + '   logged ' + mins(p.loggedMinutes) + '   ' + p.done + ' of ' + p.planned + ' tasks done');\n      if (p.assignedTotal) L.push('  your tasks: ' + p.assignedDone + ' of ' + p.assignedTotal + ' done');\n    } else {\n      L.push('  logged ' + mins(p.loggedMinutes) + ' across ' + p.sessions + ' session' + (p.sessions === 1 ? '' : 's') + ' \u2014 nothing was planned');\n    }\n    L.push('');\n    for (const i of p.items) {\n      const mark = i.status === 'done' ? '[x]' : (i.status === 'skipped' ? '[-]' : '[ ]');\n      let line = '  ' + mark + ' ' + i.title;\n      const bits = [];\n      bits.push(mins(i.estimateMin) + ' planned');\n      if (i.actualMin > 0) bits.push(mins(i.actualMin) + ' actual');\n      if (i.assignedBy) bits.push('you assigned');\n      if (i.movedCount > 0) bits.push('moved ' + i.movedCount + 'x');\n      line += '   (' + bits.join(', ') + ')';\n      L.push(line);\n      if (i.status === 'skipped' && i.skipReason) L.push('        skipped: ' + i.skipReason);\n    }\n    if (p.unplannedSessions && p.items.length) {\n      L.push('  + ' + mins(p.unplannedMinutes) + ' on ' + p.unplannedSessions + ' unplanned session' + (p.unplannedSessions === 1 ? '' : 's'));\n    }\n    L.push('');\n  }\n\n  const quiet = $json.people.filter(p => p.quiet);\n  if (quiet.length) {\n    L.push('----------------------------------------');\n    L.push('NO ACTIVITY AT ALL');\n    L.push('  ' + quiet.map(p => p.name).join(', '));\n    L.push('  Nothing planned and no timer use. May be off today.');\n    L.push('');\n  }\n\n  L.push('----------------------------------------');\n  L.push('Dashboard: https://focus.u2berclub.com/' + $json.business.slug + '/admin');\n  L.push('To change the time this arrives, or switch it off: Settings tab.');\n  return L.join('\\n');\n})() }}",
+        "options": {}
+      },
+      "id": "mail",
+      "name": "Email the report",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        660,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://focus.u2berclub.com/api/automation/reports-sent",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Api-Key",
+              "value": "PASTE_YOUR_ALERTS_KEY"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ sent: $('One item per workspace').all().map(i => ({ businessId: i.json.business.id, date: i.json.date })) }) }}",
+        "options": {}
+      },
+      "id": "mark",
+      "name": "Mark reports as sent",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Every hour": {
+      "main": [
+        [
+          {
+            "node": "Which reports are due",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Which reports are due": {
+      "main": [
+        [
+          {
+            "node": "One item per workspace",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "One item per workspace": {
+      "main": [
+        [
+          {
+            "node": "Email the report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email the report": {
+      "main": [
+        [
+          {
+            "node": "Mark reports as sent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

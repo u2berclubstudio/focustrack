@@ -282,6 +282,11 @@ addColumn('tokens', 'impersonated_by', 'TEXT DEFAULT NULL');
 addColumn('businesses', 'last_active_at', 'TEXT');
 addColumn('businesses', 'notification_interval', 'INTEGER DEFAULT 6');
 addColumn('businesses', 'last_inactive_notification_sent_at', 'TEXT');
+// End-of-day report: the business-local hour to send at, or NULL for off.
+// `last_daily_report_date` holds a local date, which is what makes "once per
+// day" hold even if the automation runs every hour.
+addColumn('businesses', 'daily_report_hour', 'INTEGER DEFAULT 18');
+addColumn('businesses', 'last_daily_report_date', 'TEXT');
 // Links a timed session back to the plan item it came from. NULL for anything
 // typed freely, which is most unplanned work and perfectly fine.
 addColumn('sessions', 'plan_item_id', 'INTEGER');

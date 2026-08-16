@@ -127,6 +127,23 @@ const srv=app.listen(0,async()=>{
     assert.ok(!/Ghost[\s\S]{0,400}width:3%/.test(p3),'they should get no score bar at all');
     ok('someone who planned but never started shows as "No timer use", not a zero score');
 
+
+    // The Settings preview and the automation email must say the same thing;
+    // if they drift, an admin tunes the report against a lie.
+    await aw.loadSettings();
+    const rep=(await call('/api/admin/daily-report',{},admin)).body;
+    const shown=aw.renderReport(rep);
+    const wf=JSON.parse(require('fs').readFileSync('./n8n-daily-report.json','utf8'));
+    const expr=wf.nodes.find(n=>n.name==='Email the report').parameters.text
+      .match(/\{\{ (\(\(\) => \{[\s\S]*\}\)\(\)) \}\}/)[1];
+    const emailed=new Function('$json','return '+expr)(rep);
+    const norm=x=>x.split('\n').map(l=>l.trimEnd()).filter(l=>l&&!/^(THE DAY IN ONE LINE|Dashboard:|To change|FocusTrack —)/.test(l)).join('\n');
+    assert.strictEqual(norm(shown), norm(emailed), 'preview and email must match');
+    ok('the Settings preview renders exactly what the automation emails');
+
+    assert.strictEqual(aw.document.getElementById('reportHour').value,'18');
+    ok('the report hour loads into the Settings form');
+
     console.log('\nUI checks passed.\n'); srv.close(); process.exit(0);
   }catch(e){console.error('\nFAILED:',e.message);console.error(e.stack.split('\n').slice(0,4).join('\n'));srv.close();process.exit(1)}
 });

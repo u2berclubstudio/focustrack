@@ -1141,6 +1141,8 @@ app.get('/api/admin/settings', auth, businessAdmin, wrap((req, res) => {
     tz_offset: biz.tz_offset,
     name: biz.name,
     notification_interval: biz.notification_interval || 6,
+    daily_report_hour: biz.daily_report_hour,      // null means switched off
+    contact_email: biz.contact_email,
   });
 }));
 
@@ -1163,6 +1165,26 @@ app.patch('/api/admin/settings', auth, businessAdmin, wrap((req, res) => {
     }
     db.prepare('UPDATE businesses SET notification_interval = ? WHERE id = ?')
       .run(interval, req.business.id);
+  }
+  // '' or null switches the end-of-day report off entirely.
+  if (req.body.daily_report_hour !== undefined) {
+    const raw = req.body.daily_report_hour;
+    if (raw === null || raw === '') {
+      db.prepare('UPDATE businesses SET daily_report_hour = NULL WHERE id = ?').run(req.business.id);
+    } else {
+      const h = Number(raw);
+      if (!Number.isInteger(h) || h < 0 || h > 23) {
+        return res.status(400).json({ error: 'Pick an hour between 0 and 23' });
+      }
+      db.prepare('UPDATE businesses SET daily_report_hour = ? WHERE id = ?').run(h, req.business.id);
+    }
+  }
+  if (req.body.contact_email !== undefined) {
+    const e = String(req.body.contact_email).trim().slice(0, 200);
+    if (e && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)) {
+      return res.status(400).json({ error: 'That does not look like an email address' });
+    }
+    db.prepare('UPDATE businesses SET contact_email = ? WHERE id = ?').run(e, req.business.id);
   }
   res.json({ ok: true });
 }));
@@ -1413,6 +1435,135 @@ app.get('/api/automation/alerts-due', automationOnly, wrap((req, res) => {
     });
   }
   res.json({ due, checkedAt: nowISO() });
+}));
+
+// ---- end-of-day report ----
+
+// One day of one workspace, person by person: what they planned, what they
+// actually logged against it, and what moved. Shared by the automation feed
+// and the admin's own "preview" button so both can never drift apart.
+function dailyReport(biz, date) {
+  const tz = biz.tz_offset;
+  const people = db.prepare(
+    "SELECT id, name, team FROM users WHERE business_id = ? AND active = 1 AND role != 'master' ORDER BY name"
+  ).all(biz.id);
+
+  // Pull the day's sessions once rather than per person.
+  const sessions = db.prepare(
+    'SELECT * FROM sessions WHERE business_id = ? AND started_at > ? AND started_at < ?'
+  ).all(biz.id,
+        new Date(new Date(date + 'T00:00:00Z') - tz * 60000 - 86400000).toISOString(),
+        new Date(new Date(date + 'T00:00:00Z') - tz * 60000 + 2 * 86400000).toISOString())
+    .filter((s) => localDate(s.started_at, tz) === date);
+
+  const rows = people.map((p) => {
+    const mine = sessions.filter((s) => s.user_id === p.id);
+    const items = db.prepare(
+      `SELECT p.*, (SELECT COALESCE(SUM(s.actual_seconds),0) FROM sessions s WHERE s.plan_item_id = p.id)
+                     AS actual_seconds
+         FROM plan_items p WHERE p.user_id = ? AND p.plan_date = ? ORDER BY p.position, p.id`
+    ).all(p.id, date);
+
+    const loggedSeconds = mine.reduce((a, s) => a + (s.actual_seconds || 0), 0);
+    const counted = items.filter((i) => i.status !== 'skipped');
+    const assigned = items.filter((i) => i.assigned_by);
+
+    // Work done that was never on the plan. Often the real story of the day,
+    // and invisible if you only report on planned items.
+    const unplanned = mine.filter((s) => !s.plan_item_id);
+
+    return {
+      userId: p.id, name: p.name, team: p.team || '',
+      plannedMinutes: counted.reduce((a, i) => a + i.estimate_min, 0),
+      loggedMinutes: Math.round(loggedSeconds / 60),
+      sessions: mine.length,
+      completedSessions: mine.filter(didFinish).length,
+      distractions: db.prepare(
+        'SELECT COUNT(*) c FROM distractions WHERE user_id = ? AND session_id IN (' +
+        (mine.length ? mine.map(() => '?').join(',') : 'NULL') + ')'
+      ).get(p.id, ...mine.map((s) => s.id)).c,
+      planned: counted.length,
+      done: items.filter((i) => i.status === 'done').length,
+      assignedTotal: assigned.length,
+      assignedDone: assigned.filter((i) => i.status === 'done').length,
+      unplannedSessions: unplanned.length,
+      unplannedMinutes: Math.round(unplanned.reduce((a, s) => a + (s.actual_seconds || 0), 0) / 60),
+      items: items.map((i) => ({
+        title: i.title,
+        status: i.status,
+        estimateMin: i.estimate_min,
+        actualMin: Math.round(i.actual_seconds / 60),
+        assignedBy: i.assigned_by,
+        skipReason: i.skip_reason || '',
+        movedCount: i.moved_count,
+      })),
+      // Someone with no plan and no sessions is simply absent from the data.
+      // Saying so is more useful than printing a row of zeroes.
+      quiet: !items.length && !mine.length,
+    };
+  });
+
+  const active = rows.filter((r) => !r.quiet);
+  return {
+    date,
+    business: { id: biz.id, name: biz.name, slug: biz.slug, contactEmail: biz.contact_email },
+    people: rows,
+    totals: {
+      people: rows.length,
+      activePeople: active.length,
+      quietPeople: rows.length - active.length,
+      plannedMinutes: active.reduce((a, r) => a + r.plannedMinutes, 0),
+      loggedMinutes: active.reduce((a, r) => a + r.loggedMinutes, 0),
+      sessions: active.reduce((a, r) => a + r.sessions, 0),
+      distractions: active.reduce((a, r) => a + r.distractions, 0),
+      planned: active.reduce((a, r) => a + r.planned, 0),
+      done: active.reduce((a, r) => a + r.done, 0),
+      assignedTotal: active.reduce((a, r) => a + r.assignedTotal, 0),
+      assignedDone: active.reduce((a, r) => a + r.assignedDone, 0),
+    },
+  };
+}
+
+// Which workspaces have reached their chosen hour and haven't had today's
+// report yet. Comparing on the business-local date is what stops a workflow
+// that runs hourly from sending twenty copies.
+app.get('/api/automation/reports-due', automationOnly, wrap((req, res) => {
+  const due = [];
+  for (const b of db.prepare("SELECT * FROM businesses WHERE status = 'active'").all()) {
+    if (b.daily_report_hour === null || b.daily_report_hour === undefined) continue;
+    if (!b.contact_email) continue;
+
+    const tz = b.tz_offset;
+    const localNow = shift(nowISO(), tz);
+    const localToday = localNow.toISOString().slice(0, 10);
+    if (localNow.getUTCHours() < b.daily_report_hour) continue;
+    if (b.last_daily_report_date === localToday) continue;
+
+    due.push(dailyReport(b, localToday));
+  }
+  res.json({ due, checkedAt: nowISO() });
+}));
+
+app.post('/api/automation/reports-sent', automationOnly, wrap((req, res) => {
+  const sent = Array.isArray(req.body.sent) ? req.body.sent : [];
+  let n = 0;
+  for (const row of sent) {
+    const id = Number(row && row.businessId);
+    const date = String(row && row.date || '');
+    if (!Number.isInteger(id) || !/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
+    n += db.prepare('UPDATE businesses SET last_daily_report_date = ? WHERE id = ?')
+      .run(date, id).changes;
+  }
+  if (n) audit('automation', 'daily_reports_sent', `${n} workspace(s)`);
+  res.json({ ok: true, updated: n });
+}));
+
+// So an admin can see exactly what lands in their inbox before switching it on.
+app.get('/api/admin/daily-report', auth, businessAdmin, wrap((req, res) => {
+  const tz = req.business.tz_offset;
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(req.query.date || '') ? req.query.date : todayLocal(tz);
+  const biz = db.prepare('SELECT * FROM businesses WHERE id = ?').get(req.business.id);
+  res.json(dailyReport(biz, date));
 }));
 
 // n8n calls this after the emails actually go out, so a failed send is

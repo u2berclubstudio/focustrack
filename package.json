@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node server.js",
     "seed": "node seed.js",
-    "test": "node test.js && node test-security.js && node test-alerts.js && node test-planner.js && node test-migration.js",
+    "test": "node test.js && node test-security.js && node test-alerts.js && node test-planner.js && node test-report.js && node test-report-email.js && node test-ui.js && node test-migration.js",
     "test:ui": "node test-ui.js"
   },
   "engines": {
@@ -21,6 +21,6 @@
     "better-sqlite3": "^11.5.0"
   },
   "devDependencies": {
-    "jsdom": "^25.0.0"
+    "jsdom": "^25.0.1"
   }
 }
