@@ -38,10 +38,27 @@ finished. Two buttons. Finishing a 30-minute block often doesn't finish the
 job, so the app asks rather than assumes — guessing either way would make the
 numbers lie.
 
+**Finished work leaves the list.** Ticking a task drops it into a collapsed
+strip at the bottom — `1 done today ▾`. Tap to reopen it, and un-tick anything
+you ticked by mistake. Skipped work goes there too, but the label keeps them
+apart (`2 done · 1 skipped`) rather than pretending a skip was a completion.
+
 **Unfinished work follows you.** Anything still open at the end of the day
 appears on tomorrow's list tagged *moved once*, then *moved 2×*, and so on.
 That tag is deliberate. A task on its fourth day usually means it was too big
 or it's blocked on someone, and both are worth saying out loud.
+
+**History** is the link at the top. Pick any past day and see it as it ended:
+what got done, what was skipped and why, what each actually took.
+
+Past days are **read-only**. The daily report has already gone out with those
+numbers, and letting someone re-tick Tuesday on Thursday would mean the email
+and the app disagree about what happened. Today stays editable all day, so
+there is plenty of room to fix a mis-tap.
+
+A day also shows work that was *carried out* of it, marked `carried to another
+day`. Without that, a day you planned three things and finished two would look
+like you only ever planned two.
 
 After a week, anything untouched is retired automatically. Coming back from
 leave shouldn't mean forty stale tasks.

@@ -79,6 +79,28 @@
   .planadd input{flex:1;padding:11px 12px;font-size:14px;margin:0}
   .planadd select{width:auto;padding:11px 8px;font-size:13px;margin:0}
   .planempty{color:var(--dim);font-size:13px;line-height:1.5;padding:4px 0 2px}
+
+  /* --- what's already been cleared today --- */
+  .doneStrip{width:100%;display:flex;justify-content:space-between;align-items:center;
+    background:transparent;border:none;border-top:1px solid var(--line);
+    color:var(--dim);font-size:13px;padding:11px 0 4px;cursor:pointer;text-align:left}
+  .doneStrip .chev{transition:transform .18s ease;font-size:11px}
+  .doneStrip.open .chev{transform:rotate(180deg)}
+  #doneList .pi{opacity:.62}
+  #doneList .pi:first-child{padding-top:4px}
+
+  /* --- history --- */
+  .hist .day{display:flex;justify-content:space-between;align-items:center;gap:10px;
+    padding:12px 0;border-bottom:1px solid var(--line);cursor:pointer}
+  .hist .day:last-child{border-bottom:none}
+  .hist .day .d{font-size:14px}
+  .hist .day .s{font-size:12px;color:var(--dim);margin-top:3px}
+  .hist .day .go{color:var(--accent);font-size:12px;white-space:nowrap}
+  .histhead{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px}
+  .backlink{background:transparent;border:none;color:var(--accent);font-size:13px;
+    cursor:pointer;padding:0}
+  .readonly{font-size:12px;color:var(--dim);background:#0f1218;border:1px solid var(--line);
+    border-radius:8px;padding:9px 11px;margin-bottom:14px;line-height:1.5}
 </style>
 </head>
 <body>
@@ -107,6 +129,7 @@
         <p class="sub" id="dateLine" style="margin:0"></p>
       </div>
       <div>
+        <a href="#" id="historyLink">History</a>
         <a href="#" id="adminLink" class="hidden">Dashboard</a>
         <a href="#" id="logout">Sign out</a>
       </div>
@@ -118,6 +141,10 @@
         <span class="muted" style="font-size:12px" id="planTotal"></span>
       </div>
       <div id="planList"></div>
+      <button class="doneStrip hidden" id="doneStrip">
+        <span id="doneStripText"></span><span class="chev" id="doneChev">▾</span>
+      </button>
+      <div id="doneList" class="hidden"></div>
       <div class="planadd">
         <input id="planTitle" placeholder="Add a task for today">
         <select id="planEst">
@@ -194,6 +221,35 @@
     <div class="card" id="recentCard">
       <label style="margin-bottom:6px">Recent sessions</label>
       <div class="list" id="recent"></div>
+    </div>
+  </section>
+
+  <!-- HISTORY -->
+  <section id="historyView" class="hidden">
+    <div class="top">
+      <div>
+        <h1 style="margin:0">History</h1>
+        <p class="sub" style="margin:0" id="histSub">Your past days</p>
+      </div>
+      <div><a href="#" id="histBack">Back</a></div>
+    </div>
+
+    <div class="card" id="histDaysCard">
+      <label style="margin-bottom:4px">Pick a day</label>
+      <div class="hist" id="histDays"></div>
+    </div>
+
+    <div class="card hidden" id="histDayCard">
+      <div class="histhead">
+        <label style="margin:0" id="histDayTitle"></label>
+        <button class="backlink" id="histAllDays">All days</button>
+      </div>
+      <div class="muted" style="font-size:12px;margin:2px 0 14px" id="histDayTotals"></div>
+      <div class="readonly" id="histReadonly">
+        This day is finished, so it can't be edited. Anything you need to change
+        has to be done on today's plan.
+      </div>
+      <div id="histItems"></div>
     </div>
   </section>
 </div>
@@ -439,53 +495,94 @@ function clock(hhmm) {
   return m ? `${hour}:${String(m).padStart(2, '0')}${suffix}` : `${hour}${suffix}`;
 }
 
+// One row, used by both the open list and the cleared strip.
+function planRow(i, readOnly) {
+  const resolved = i.status !== 'open';
+  const tags = [];
+  if (i.at_time) tags.push(`<span class="tag fix">${clock(i.at_time)}</span>`);
+  tags.push(`<span>${fmtMins(i.estimate_min)}</span>`);
+  if (i.actual_seconds > 0) tags.push(`<span>${fmtMins(Math.round(i.actual_seconds / 60))} logged</span>`);
+  if (i.assigned_by) tags.push(`<span class="tag">from ${escapeHtml(i.assigned_by)}</span>`);
+  if (i.moved_count === 1) tags.push('<span class="tag warn">moved once</span>');
+  else if (i.moved_count > 1) tags.push(`<span class="tag warn">moved ${i.moved_count}×</span>`);
+  if (i.status === 'skipped') {
+    tags.push(`<span class="tag">skipped${i.skip_reason ? ': ' + escapeHtml(i.skip_reason) : ''}</span>`);
+  }
+  if (i.carried_away) tags.push('<span class="tag warn">carried to another day</span>');
+
+  return `<div class="pi ${resolved ? 'done' : ''}" data-id="${i.id}">
+    ${readOnly
+      ? `<div class="tick" style="cursor:default">${i.status === 'done' ? '✓' : (i.status === 'skipped' ? '–' : '')}</div>`
+      : `<button class="tick" data-act="toggle" title="${resolved ? 'Put back' : 'Mark done'}">${i.status === 'done' ? '✓' : (i.status === 'skipped' ? '–' : '')}</button>`}
+    <div class="body">
+      <div class="t">${escapeHtml(i.title)}</div>
+      <div class="meta">${tags.join('')}</div>
+    </div>
+    ${!readOnly && i.status === 'open' ? '<button class="go" data-act="start">Start</button>' : ''}
+    ${!readOnly && !i.assigned_by && i.status === 'open'
+      ? '<button class="kill" data-act="del" title="Remove">×</button>' : ''}
+  </div>`;
+}
+
+// Whether the cleared strip is expanded. Kept across reloads so ticking a
+// second task while the strip is open doesn't snap it shut under your finger.
+let doneOpen = false;
+
 async function loadPlan() {
   try {
     const d = await api('/api/my/plan');
     planCache = d.items;
     const open = d.items.filter((i) => i.status === 'open');
+    const cleared = d.items.filter((i) => i.status !== 'open');
 
     $('#planTotal').textContent = d.items.length
-      ? (open.length ? `${fmtMins(d.totals.plannedMinutes)} left · ${d.totals.done}/${d.totals.items} done`
-                     : `All ${d.totals.items} done`)
+      ? (open.length
+          ? `${fmtMins(d.totals.plannedMinutes)} left · ${d.totals.done}/${d.totals.items} done`
+          : 'Everything done')
       : '';
 
     if (!d.items.length) {
       $('#planList').innerHTML =
         '<div class="planempty">Nothing planned yet. Add what you want to get through today — ' +
         'then start the timer straight from the list.</div>';
-      return;
+    } else if (!open.length) {
+      $('#planList').innerHTML =
+        '<div class="planempty">Everything you planned today is done. Add another task, ' +
+        'or just start the timer below.</div>';
+    } else {
+      $('#planList').innerHTML = open.map((i) => planRow(i, false)).join('');
     }
 
-    $('#planList').innerHTML = d.items.map((i) => {
-      const isDone = i.status !== 'open';
-      const tags = [];
-      if (i.at_time) tags.push(`<span class="tag fix">${clock(i.at_time)}</span>`);
-      tags.push(`<span>${fmtMins(i.estimate_min)}</span>`);
-      if (i.actual_seconds > 0) tags.push(`<span>${fmtMins(Math.round(i.actual_seconds / 60))} logged</span>`);
-      if (i.assigned_by) tags.push(`<span class="tag">from ${escapeHtml(i.assigned_by)}</span>`);
-      if (i.moved_count === 1) tags.push('<span class="tag warn">moved once</span>');
-      else if (i.moved_count > 1) tags.push(`<span class="tag warn">moved ${i.moved_count}×</span>`);
-      if (i.status === 'skipped') tags.push('<span class="tag">skipped</span>');
-
-      return `<div class="pi ${isDone ? 'done' : ''}" data-id="${i.id}">
-        <button class="tick" data-act="toggle" title="Mark done">${isDone ? '✓' : ''}</button>
-        <div class="body">
-          <div class="t">${escapeHtml(i.title)}</div>
-          <div class="meta">${tags.join('')}</div>
-        </div>
-        ${i.status === 'open'
-          ? `<button class="go" data-act="start">Start</button>`
-          : ''}
-        ${i.assigned_by ? '' : '<button class="kill" data-act="del" title="Remove">×</button>'}
-      </div>`;
-    }).join('');
+    // Done and skipped both leave the working list, but the label has to be
+    // honest about which is which — an admin sees the same numbers.
+    const done = cleared.filter((i) => i.status === 'done').length;
+    const skipped = cleared.length - done;
+    if (cleared.length) {
+      const parts = [];
+      if (done) parts.push(`${done} done`);
+      if (skipped) parts.push(`${skipped} skipped`);
+      $('#doneStripText').textContent = parts.join(' · ') + ' today';
+      $('#doneStrip').classList.remove('hidden');
+      $('#doneStrip').classList.toggle('open', doneOpen);
+      $('#doneList').innerHTML = cleared.map((i) => planRow(i, false)).join('');
+      $('#doneList').classList.toggle('hidden', !doneOpen);
+    } else {
+      $('#doneStrip').classList.add('hidden');
+      $('#doneList').classList.add('hidden');
+      $('#doneList').innerHTML = '';
+    }
   } catch {}
 }
 
-$('#planList').onclick = async (e) => {
+$('#doneStrip').onclick = () => {
+  doneOpen = !doneOpen;
+  $('#doneStrip').classList.toggle('open', doneOpen);
+  $('#doneList').classList.toggle('hidden', !doneOpen);
+};
+
+const onPlanClick = async (e) => {
   const btn = e.target.closest('button');
-  if (!btn) return;
+  if (!btn || !btn.dataset.act) return;
   const id = Number(btn.closest('.pi').dataset.id);
   const item = planCache.find((i) => i.id === id);
   if (!item) return;
@@ -526,6 +623,9 @@ $('#planList').onclick = async (e) => {
   } catch (err) { $('#planErr').textContent = err.message; }
 };
 
+$('#planList').onclick = onPlanClick;
+$('#doneList').onclick = onPlanClick;
+
 $('#planAdd').onclick = async () => {
   const title = $('#planTitle').value.trim();
   $('#planErr').textContent = '';
@@ -538,6 +638,84 @@ $('#planAdd').onclick = async () => {
   } catch (e) { $('#planErr').textContent = e.message; }
 };
 $('#planTitle').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#planAdd').click(); });
+
+// ---------- history ----------
+// "Mon 16 Aug", or plain words for the two days people actually mean.
+function dayLabel(date, today) {
+  const d = new Date(date + 'T00:00:00');
+  const t = new Date(today + 'T00:00:00');
+  const diff = Math.round((t - d) / 86400000);
+  if (diff === 0) return 'Today';
+  if (diff === 1) return 'Yesterday';
+  return d.toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' });
+}
+
+function showHistory(on) {
+  $('#appView').classList.toggle('hidden', on);
+  $('#historyView').classList.toggle('hidden', !on);
+  if (on) { $('#histDayCard').classList.add('hidden'); $('#histDaysCard').classList.remove('hidden'); }
+}
+
+$('#historyLink').onclick = async (e) => {
+  e.preventDefault();
+  showHistory(true);
+  try {
+    const d = await api('/api/my/plan/history');
+    if (!d.days.length) {
+      $('#histDays').innerHTML =
+        '<div class="planempty">Nothing here yet. Once you plan a day or run a session, it shows up.</div>';
+      return;
+    }
+    $('#histSub').textContent = `${d.days.length} day${d.days.length === 1 ? '' : 's'} recorded`;
+    $('#histDays').innerHTML = d.days.map((x) => {
+      const bits = [];
+      if (x.items) bits.push(`${x.done}/${x.items} done`);
+      if (x.skipped) bits.push(`${x.skipped} skipped`);
+      bits.push(x.loggedMinutes ? `${fmtMins(x.loggedMinutes)} logged` : 'nothing logged');
+      return `<div class="day" data-date="${x.date}">
+        <div>
+          <div class="d">${dayLabel(x.date, d.today)}${x.isToday ? '' : ''}</div>
+          <div class="s">${bits.join(' · ')}</div>
+        </div>
+        <div class="go">View →</div>
+      </div>`;
+    }).join('');
+  } catch (e2) { $('#histDays').innerHTML = `<div class="planempty">${escapeHtml(e2.message)}</div>`; }
+};
+
+$('#histBack').onclick = (e) => { e.preventDefault(); showHistory(false); };
+$('#histAllDays').onclick = () => {
+  $('#histDayCard').classList.add('hidden');
+  $('#histDaysCard').classList.remove('hidden');
+};
+
+$('#histDays').onclick = async (e) => {
+  const row = e.target.closest('.day');
+  if (!row) return;
+  const date = row.dataset.date;
+  try {
+    const [plan, hist] = await Promise.all([
+      api('/api/my/plan?date=' + date),
+      api('/api/my/plan/history'),
+    ]);
+    const isToday = date === hist.today;
+    $('#histDayTitle').textContent = dayLabel(date, hist.today);
+    const day = hist.days.find((x) => x.date === date) || { loggedMinutes: 0, sessions: 0 };
+    $('#histDayTotals').textContent =
+      `planned ${fmtMins(plan.totals.plannedMinutes + plan.items.filter((i) => i.status === 'done')
+        .reduce((a, i) => a + i.estimate_min, 0))} · ` +
+      `logged ${fmtMins(day.loggedMinutes)} across ${day.sessions} session${day.sessions === 1 ? '' : 's'} · ` +
+      `${plan.totals.done} of ${plan.items.filter((i) => i.status !== 'skipped').length} done`;
+
+    // Today is still live, so don't tell someone it can't be changed.
+    $('#histReadonly').classList.toggle('hidden', isToday);
+    $('#histItems').innerHTML = plan.items.length
+      ? plan.items.map((i) => planRow(i, true)).join('')
+      : '<div class="planempty">Nothing was planned this day.</div>';
+    $('#histDaysCard').classList.add('hidden');
+    $('#histDayCard').classList.remove('hidden');
+  } catch (err) { alert(err.message); }
+};
 
 // ---------- today ----------
 async function loadToday() {

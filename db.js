@@ -290,6 +290,11 @@ addColumn('businesses', 'last_daily_report_date', 'TEXT');
 // Links a timed session back to the plan item it came from. NULL for anything
 // typed freely, which is most unplanned work and perfectly fine.
 addColumn('sessions', 'plan_item_id', 'INTEGER');
+// Every day a task has appeared on, as ',YYYY-MM-DD,' segments. Carrying work
+// forward moves the row, so without this a past day would silently lose the
+// tasks that got carried out of it — and history would understate what was
+// actually planned that day.
+addColumn('plan_items', 'moved_trail', "TEXT DEFAULT ''");
 
 db.exec(`
 CREATE INDEX IF NOT EXISTS idx_sessions_user     ON sessions(user_id);

@@ -584,13 +584,17 @@ function rollForward(userId, businessId, today) {
   let pos = maxPos + 1;
   for (const item of stale) {
     // Move the row rather than copying it, so a task keeps one identity and the
-    // sessions already logged against it stay attached.
+    // sessions already logged against it stay attached. The trail remembers
+    // every day it passed through, so looking back at one of those days still
+    // shows it was on the plan.
+    const trail = item.moved_trail || '';
     db.prepare(
       `UPDATE plan_items
           SET plan_date = ?, position = ?, moved_count = moved_count + 1,
-              moved_from = COALESCE(moved_from, plan_date)
+              moved_from = COALESCE(moved_from, plan_date),
+              moved_trail = ?
         WHERE id = ?`
-    ).run(today, pos++, item.id);
+    ).run(today, pos++, trail + ',' + item.plan_date + ',', item.id);
   }
 }
 
@@ -599,26 +603,39 @@ function rollForward(userId, businessId, today) {
 function readPlan(userId, businessId, date, { roll = false } = {}) {
   if (roll) rollForward(userId, businessId, date);
 
+  // A past day also has to include work that was on it but later carried
+  // forward, otherwise history quietly understates what was planned.
   const items = db.prepare(
     `SELECT p.*,
             (SELECT COALESCE(SUM(s.actual_seconds), 0) FROM sessions s
               WHERE s.plan_item_id = p.id) AS actual_seconds,
-            (SELECT COUNT(*) FROM sessions s WHERE s.plan_item_id = p.id) AS session_count
+            (SELECT COUNT(*) FROM sessions s WHERE s.plan_item_id = p.id) AS session_count,
+            (p.plan_date != ?) AS carried_away
        FROM plan_items p
-      WHERE p.user_id = ? AND p.plan_date = ?
-      ORDER BY p.position, p.id`
-  ).all(userId, date);
+      WHERE p.user_id = ?
+        AND (p.plan_date = ? OR instr(COALESCE(p.moved_trail,''), ?) > 0)
+      ORDER BY carried_away, p.position, p.id`
+  ).all(date, userId, date, ',' + date + ',');
 
-  const open = items.filter((i) => i.status === 'open');
+  // Something carried out of this day was, by definition, unfinished then —
+  // regardless of what has happened to it since.
+  for (const i of items) {
+    i.carried_away = !!i.carried_away;
+    if (i.carried_away) i.status = 'carried';
+  }
+
+  const counted = items.filter((i) => !i.carried_away);
+  const open = counted.filter((i) => i.status === 'open');
   return {
     date,
     items,
     totals: {
-      items: items.length,
-      done: items.filter((i) => i.status === 'done').length,
+      items: counted.length,
+      done: counted.filter((i) => i.status === 'done').length,
       plannedMinutes: open.reduce((a, i) => a + i.estimate_min, 0),
-      actualMinutes: Math.round(items.reduce((a, i) => a + i.actual_seconds, 0) / 60),
-      movedIn: items.filter((i) => i.moved_count > 0).length,
+      actualMinutes: Math.round(counted.reduce((a, i) => a + i.actual_seconds, 0) / 60),
+      movedIn: counted.filter((i) => i.moved_count > 0).length,
+      carriedAway: items.length - counted.length,
     },
   };
 }
@@ -659,6 +676,16 @@ app.patch('/api/my/plan/:id', auth, wrap((req, res) => {
   const item = db.prepare('SELECT * FROM plan_items WHERE id = ? AND user_id = ?')
     .get(req.params.id, req.user.id);
   if (!item) return res.status(404).json({ error: 'Task not found' });
+
+  // A finished day is a record, not a working list. The daily report has
+  // already gone out with those numbers, and letting someone re-tick Tuesday
+  // on Thursday means the email and the app disagree about what happened.
+  // Today stays editable all day, so there is plenty of room to fix a mis-tap.
+  if (item.plan_date < todayLocal(req.business.tz_offset)) {
+    return res.status(403).json({
+      error: 'That day is finished. You can only change today\'s plan.',
+    });
+  }
 
   if (req.body.status !== undefined) {
     const s = String(req.body.status);
@@ -707,12 +734,67 @@ app.post('/api/my/plan/reorder', auth, wrap((req, res) => {
   res.json(readPlan(req.user.id, req.user.business_id, date));
 }));
 
+// Days that actually contain something, newest first, for the history picker.
+// Sessions count too: a day where someone worked without planning is still a
+// day worth being able to look back at.
+app.get('/api/my/plan/history', auth, wrap((req, res) => {
+  const tz = req.business.tz_offset;
+  const today = todayLocal(tz);
+  const limit = Math.max(1, Math.min(90, Number(req.query.limit) || 30));
+
+  const planDays = db.prepare(
+    `SELECT plan_date AS date,
+            COUNT(*) AS items,
+            SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END) AS done,
+            SUM(CASE WHEN status = 'skipped' THEN 1 ELSE 0 END) AS skipped,
+            SUM(CASE WHEN status != 'skipped' THEN estimate_min ELSE 0 END) AS planned_min
+       FROM plan_items WHERE user_id = ? GROUP BY plan_date`
+  ).all(req.user.id);
+
+  // Sessions are stored as timestamps, so group them in the business's own day.
+  const byDay = {};
+  for (const s of db.prepare(
+    "SELECT started_at, actual_seconds FROM sessions WHERE user_id = ? AND status != 'running'"
+  ).all(req.user.id)) {
+    const d = localDate(s.started_at, tz);
+    byDay[d] ||= { sessions: 0, seconds: 0 };
+    byDay[d].sessions++;
+    byDay[d].seconds += s.actual_seconds || 0;
+  }
+
+  const dates = new Set([...planDays.map((d) => d.date), ...Object.keys(byDay)]);
+  const days = [...dates]
+    .filter((d) => d <= today)
+    .sort()
+    .reverse()
+    .slice(0, limit)
+    .map((date) => {
+      const p = planDays.find((x) => x.date === date);
+      const s = byDay[date] || { sessions: 0, seconds: 0 };
+      return {
+        date,
+        isToday: date === today,
+        items: p ? p.items : 0,
+        done: p ? p.done : 0,
+        skipped: p ? p.skipped : 0,
+        plannedMinutes: p ? p.planned_min : 0,
+        sessions: s.sessions,
+        loggedMinutes: Math.round(s.seconds / 60),
+      };
+    });
+
+  res.json({ days, today });
+}));
+
 // You can remove what you added. Work an admin assigned can only be skipped
 // with a reason, so nothing they asked for disappears without a trace.
 app.delete('/api/my/plan/:id', auth, wrap((req, res) => {
   const item = db.prepare('SELECT * FROM plan_items WHERE id = ? AND user_id = ?')
     .get(req.params.id, req.user.id);
   if (!item) return res.status(404).json({ error: 'Task not found' });
+  if (item.plan_date < todayLocal(req.business.tz_offset)) {
+    return res.status(403).json({ error: 'That day is finished and cannot be changed.' });
+  }
   if (item.assigned_by) {
     return res.status(403).json({
       error: `${item.assigned_by} assigned this. You can mark it done or skip it with a reason.`,
