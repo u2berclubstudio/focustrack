@@ -411,10 +411,12 @@ function renderHeadline(d) {
   const top = d.topReasons[0];
   const pieces = [
     `Your team put in <b>${fmtMin(Math.round(t.focusedHours * 60))}</b> of focused work across <b>${t.sessions} sessions</b>.`,
+    t.manualHours > 0
+      ? `A further <b>${fmtMin(Math.round(t.manualHours * 60))}</b> was added by hand and isn't scored.` : '',
     `<b>${outOfTen} out of every 10</b> sessions get finished.`,
     top ? `The thing that pulls people away most is <span class="hl">${esc(top.reason)}</span>.` : 'Nothing has interrupted them yet.',
   ];
-  $('#headline').innerHTML = pieces.join(' ');
+  $('#headline').innerHTML = pieces.filter(Boolean).join(' ');
   $('#scoreNote').textContent =
     'The score on each card combines two things: how often someone finishes what they start, and how often they get pulled away. 70 and above is healthy.';
 }
@@ -439,6 +441,8 @@ function renderPeople(d) {
           <div class="facts">
             <div><span class="ic">📋</span><span>Planned <b>${fmtMin(e.plannedMinutes)}</b> of work${
               e.plannedItems ? ` across ${e.plannedItems} task${e.plannedItems === 1 ? '' : 's'}` : ''}</span></div>
+            ${e.manualMinutes > 0
+              ? `<div><span class="ic">✎</span><span><b>${fmtMin(e.manualMinutes)}</b> added by hand</span></div>` : ''}
             <div><span class="ic">⏱</span><span>Hasn't started the timer in this period, so there's nothing to measure</span></div>
           </div>
         </div>`;
@@ -449,6 +453,13 @@ function renderPeople(d) {
     facts.push(['✓', finishSentence(e.completed, e.sessions)]);
     facts.push(['⏱', `<b>${fmtMin(e.focusedMinutes)}</b> of focused work` +
       (e.daysActive > 1 ? ` over ${e.daysActive} days` : '')]);
+
+    // Kept as its own line rather than folded into the figure above. Measured
+    // time and remembered time are not the same evidence.
+    if (e.manualMinutes > 0) {
+      facts.push(['✎', `Plus <b>${fmtMin(e.manualMinutes)}</b> added by hand ` +
+        `(${e.manualEntries} entr${e.manualEntries === 1 ? 'y' : 'ies'}) — not counted in the score`]);
+    }
 
     // Planned against actual — the pairing that makes the plan worth keeping.
     if (e.plannedMinutes > 0) {

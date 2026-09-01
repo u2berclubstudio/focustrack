@@ -295,6 +295,11 @@ addColumn('sessions', 'plan_item_id', 'INTEGER');
 // tasks that got carried out of it — and history would understate what was
 // actually planned that day.
 addColumn('plan_items', 'moved_trail', "TEXT DEFAULT ''");
+// 'timer' for a real timed block, 'manual' for time typed in afterwards.
+// Everything that scores focus reads timer rows only — a hand-entered block
+// has no interruptions recorded, so counting it would score a perfect day for
+// forgetting to use the timer.
+addColumn('sessions', 'entry_mode', "TEXT NOT NULL DEFAULT 'timer'");
 
 db.exec(`
 CREATE INDEX IF NOT EXISTS idx_sessions_user     ON sessions(user_id);

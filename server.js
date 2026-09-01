@@ -540,15 +540,132 @@ app.get('/api/my/today', auth, wrap((req, res) => {
                ORDER BY s.id DESC LIMIT 50`)
     .all(req.user.id);
   const today = rows.filter((r) => localDate(r.started_at, tz) === todayLocal(tz));
+  const timedToday = today.filter((r) => r.entry_mode !== 'manual');
+  const manualTodayRows = today.filter((r) => r.entry_mode === 'manual');
   res.json({
     today: {
-      sessions: today.length,
-      completed: today.filter((r) => r.status === 'completed').length,
-      focusedMinutes: Math.round(today.reduce((a, r) => a + (r.actual_seconds || 0), 0) / 60),
-      distractions: today.reduce((a, r) => a + r.distractions, 0),
+      sessions: timedToday.length,
+      completed: timedToday.filter((r) => r.status === 'completed').length,
+      focusedMinutes: Math.round(timedToday.reduce((a, r) => a + (r.actual_seconds || 0), 0) / 60),
+      distractions: timedToday.reduce((a, r) => a + r.distractions, 0),
+      manualMinutes: Math.round(manualTodayRows.reduce((a, r) => a + (r.actual_seconds || 0), 0) / 60),
     },
     recent: rows.slice(0, 12),
   });
+}));
+
+// ------------------------------------------------- time you forgot to track
+// Strictly today. The point is to fill a gap you noticed the same day, not to
+// reconstruct a week from memory — recall gets unreliable fast, and a day that
+// has already been reported on should stay settled.
+const MAX_MANUAL_ENTRY_MIN = Number(process.env.MAX_MANUAL_ENTRY_MINUTES || 480);
+const MAX_MANUAL_DAY_MIN = Number(process.env.MAX_MANUAL_DAY_MINUTES || 600);
+
+// Manual entries need a timestamp, but the real one is unknown. Noon local is
+// used as a neutral placeholder — never shown as a time, and excluded from the
+// hourly chart precisely because it is made up.
+const manualStamp = (tz) => {
+  const d = new Date(Date.now() + tz * 60000);
+  d.setUTCHours(12, 0, 0, 0);
+  return new Date(d.getTime() - tz * 60000).toISOString();
+};
+
+const manualToday = (userId, tz) =>
+  db.prepare("SELECT * FROM sessions WHERE user_id = ? AND entry_mode = 'manual' ORDER BY id DESC")
+    .all(userId)
+    .filter((s) => localDate(s.started_at, tz) === todayLocal(tz));
+
+function manualSummary(req) {
+  const tz = req.business.tz_offset;
+  const today = todayLocal(tz);
+  const all = db.prepare("SELECT * FROM sessions WHERE user_id = ? AND status != 'running'")
+    .all(req.user.id)
+    .filter((s) => localDate(s.started_at, tz) === today);
+
+  const manual = all.filter((s) => s.entry_mode === 'manual');
+  const tracked = all.filter((s) => s.entry_mode !== 'manual');
+  return {
+    entries: manual.map((s) => ({
+      id: s.id, task: s.task,
+      minutes: Math.round((s.actual_seconds || 0) / 60),
+      plan_item_id: s.plan_item_id,
+      added_at: s.ended_at,
+    })),
+    trackedMinutes: Math.round(tracked.reduce((a, s) => a + (s.actual_seconds || 0), 0) / 60),
+    manualMinutes: Math.round(manual.reduce((a, s) => a + (s.actual_seconds || 0), 0) / 60),
+    remainingMinutes: Math.max(0, MAX_MANUAL_DAY_MIN -
+      Math.round(manual.reduce((a, s) => a + (s.actual_seconds || 0), 0) / 60)),
+    maxEntryMinutes: MAX_MANUAL_ENTRY_MIN,
+    maxDayMinutes: MAX_MANUAL_DAY_MIN,
+  };
+}
+
+app.get('/api/my/manual', auth, wrap((req, res) => res.json(manualSummary(req))));
+
+app.post('/api/my/manual', auth, wrap((req, res) => {
+  const tz = req.business.tz_offset;
+  const task = String(req.body.task || '').trim().slice(0, 300);
+  if (!task) return res.status(400).json({ error: 'Say what you worked on' });
+
+  const minutes = Math.round(Number(req.body.minutes));
+  if (!Number.isFinite(minutes) || minutes < 5) {
+    return res.status(400).json({ error: 'Enter at least 5 minutes' });
+  }
+  if (minutes > MAX_MANUAL_ENTRY_MIN) {
+    return res.status(400).json({
+      error: `One entry can be at most ${Math.round(MAX_MANUAL_ENTRY_MIN / 60)} hours. Split it into the separate things you worked on.`,
+    });
+  }
+
+  const summary = manualSummary(req);
+  if (summary.manualMinutes + minutes > MAX_MANUAL_DAY_MIN) {
+    return res.status(400).json({
+      error: `That would take today's added time past ${Math.round(MAX_MANUAL_DAY_MIN / 60)} hours. You have ${summary.remainingMinutes} minutes left to add.`,
+    });
+  }
+
+  // You cannot have worked more hours than have actually happened today.
+  const elapsed = Math.floor((Date.now() - new Date(todayLocal(tz) + 'T00:00:00.000Z').getTime()
+    + tz * 60000) / 60000);
+  if (summary.trackedMinutes + summary.manualMinutes + minutes > Math.max(elapsed, 60)) {
+    return res.status(400).json({
+      error: 'That is more time than has passed today. Check the amount.',
+    });
+  }
+
+  let planItemId = null;
+  if (req.body.plan_item_id) {
+    const item = db.prepare('SELECT * FROM plan_items WHERE id = ? AND user_id = ? AND plan_date = ?')
+      .get(Number(req.body.plan_item_id), req.user.id, todayLocal(tz));
+    if (!item) return res.status(404).json({ error: 'That task is not on today\'s plan' });
+    planItemId = item.id;
+  }
+
+  const stamp = manualStamp(tz);
+  const info = db.prepare(
+    `INSERT INTO sessions (business_id, user_id, task, planned_minutes, started_at, ended_at,
+                           status, actual_seconds, plan_item_id, entry_mode, note)
+     VALUES (?,?,?,?,?,?,'completed',?,?, 'manual', 'added by hand')`
+  ).run(req.user.business_id, req.user.id, task, minutes, stamp, nowISO(),
+        minutes * 60, planItemId);
+
+  touchBusiness(req.user.business_id);
+  res.json({
+    entry: db.prepare('SELECT * FROM sessions WHERE id = ?').get(info.lastInsertRowid),
+    summary: manualSummary(req),
+  });
+}));
+
+app.delete('/api/my/manual/:id', auth, wrap((req, res) => {
+  const tz = req.business.tz_offset;
+  const s = db.prepare("SELECT * FROM sessions WHERE id = ? AND user_id = ? AND entry_mode = 'manual'")
+    .get(req.params.id, req.user.id);
+  if (!s) return res.status(404).json({ error: 'Entry not found' });
+  if (localDate(s.started_at, tz) !== todayLocal(tz)) {
+    return res.status(403).json({ error: 'That day is finished and cannot be changed.' });
+  }
+  db.prepare('DELETE FROM sessions WHERE id = ?').run(s.id);
+  res.json({ ok: true, summary: manualSummary(req) });
 }));
 
 // ------------------------------------------------------------ day planner
@@ -867,7 +984,8 @@ app.get('/api/admin/stats', auth, businessAdmin, wrap((req, res) => {
     .filter((d) => ids.has(d.session_id));
 
   const totalDistractions = allDistractions.length;
-  const overall = scoreFor(sessions, totalDistractions);
+  const timedSessions = sessions.filter((s) => s.entry_mode !== 'manual');
+  const overall = scoreFor(timedSessions, totalDistractions);
 
   const byUser = {};
   for (const s of sessions) {
@@ -927,31 +1045,45 @@ app.get('/api/admin/stats', auth, businessAdmin, wrap((req, res) => {
 
   const employees = Object.values(byUser)
     .map((u) => {
+      // Everything that scores focus uses timed sessions only. A hand-entered
+      // block records no interruptions, so letting it in would mean the person
+      // who forgot the timer outscores the one who used it honestly.
+      const timed = u.sessions.filter((s) => s.entry_mode !== 'manual');
+      const manual = u.sessions.filter((s) => s.entry_mode === 'manual');
       const days = new Set(u.sessions.map((s) => localDate(s.started_at, tz)));
-      const focusedMinutes = Math.round(u.sessions.reduce((a, s) => a + (s.actual_seconds || 0), 0) / 60);
+      const focusedMinutes = Math.round(timed.reduce((a, s) => a + (s.actual_seconds || 0), 0) / 60);
+      const manualMinutes = Math.round(manual.reduce((a, s) => a + (s.actual_seconds || 0), 0) / 60);
       const plan = plannedByUser[u.user_id];
       return {
+        manualMinutes,
+        manualEntries: manual.length,
         user_id: u.user_id, name: u.name, team: u.team,
-        sessions: u.sessions.length,
-        completed: u.sessions.filter(didFinish).length,
+        sessions: timed.length,
+        completed: timed.filter(didFinish).length,
         focusedMinutes,
         distractions: u.distractions,
         daysActive: days.size,
         avgMinutesPerDay: days.size ? Math.round(focusedMinutes / days.size) : 0,
-        avgSessionMinutes: u.sessions.length ? Math.round(focusedMinutes / u.sessions.length) : 0,
+        avgSessionMinutes: timed.length ? Math.round(focusedMinutes / timed.length) : 0,
         topDistraction: topOf(reasonsByUser[u.user_id]),
-        bestHour: bestHourFor(u.sessions),
+        bestHour: bestHourFor(timed),
         plannedMinutes: plan ? plan.planned : 0,
         plannedItems: plan ? plan.items : 0,
         plannedDone: plan ? plan.done : 0,
         stuckTasks: stuckByUser[u.user_id] || [],
-        ...scoreFor(u.sessions, u.distractions),
+        ...scoreFor(timed, u.distractions),
       };
     })
     .sort((a, b) => b.focusScore - a.focusScore);
 
   // People who planned work but logged no sessions at all never appear in
   // byUser, and quietly vanishing from the dashboard is exactly wrong.
+  // A hand-entered day produces no score, so make that explicit rather than
+  // letting scoreFor return a flattering number from an empty list.
+  for (const e of employees) {
+    if (e.sessions === 0) { e.focusScore = null; e.completionRate = 0; e.distractionsPerHour = 0; }
+  }
+
   for (const [uid, plan] of Object.entries(plannedByUser)) {
     if (byUser[uid]) continue;
     const who = db.prepare('SELECT name, team FROM users WHERE id = ?').get(Number(uid));
@@ -982,7 +1114,10 @@ app.get('/api/admin/stats', auth, businessAdmin, wrap((req, res) => {
     hour: h, sessions: 0, completed: 0, distractions: 0, focusedMinutes: 0,
   }));
   const dayMap = {};
-  for (const s of sessions) {
+  // Timed sessions only. A hand-entered block carries a placeholder timestamp,
+  // so letting it in would invent a working hour that never happened and turn
+  // "does best work around 11am" into noise.
+  for (const s of timedSessions) {
     const h = hours[localHour(s.started_at, tz)];
     h.sessions++; if (didFinish(s)) h.completed++;
     h.distractions += s.distractions;
@@ -1004,9 +1139,14 @@ app.get('/api/admin/stats', auth, businessAdmin, wrap((req, res) => {
     business: { name: req.business.name, slug: req.business.slug,
                 seatsUsed, seatLimit: req.business.seat_limit },
     totals: {
-      sessions: sessions.length,
-      completed: sessions.filter(didFinish).length,
-      focusedHours: Math.round(sessions.reduce((a, s) => a + (s.actual_seconds || 0), 0) / 360) / 10,
+      sessions: timedSessions.length,
+      completed: timedSessions.filter(didFinish).length,
+      focusedHours: Math.round(timedSessions.reduce((a, s) => a + (s.actual_seconds || 0), 0) / 360) / 10,
+      // Reported separately so the headline never mixes measured time with
+      // remembered time.
+      manualHours: Math.round(sessions.filter((s) => s.entry_mode === 'manual')
+        .reduce((a, s) => a + (s.actual_seconds || 0), 0) / 360) / 10,
+      manualEntries: sessions.filter((s) => s.entry_mode === 'manual').length,
       distractions: totalDistractions,
       activeEmployees: employees.length,
       ...overall,
@@ -1038,14 +1178,21 @@ app.get('/api/admin/export.csv', auth, businessAdmin, wrap((req, res) => {
   const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
   const lines = [[
     'session_id', 'team_member', 'team', 'date', 'start_time', 'end_time', 'task',
-    'planned_minutes', 'actual_minutes', 'status', 'distraction_count', 'distraction_reasons',
+    'planned_minutes', 'actual_minutes', 'status', 'entry_mode',
+    'distraction_count', 'distraction_reasons',
   ].join(',')];
   for (const s of sessions) {
+    const manual = s.entry_mode === 'manual';
     lines.push([
-      s.id, s.user_name, s.team, localDate(s.started_at, tz), localTime(s.started_at, tz),
-      s.ended_at ? localTime(s.ended_at, tz) : '', s.task, s.planned_minutes,
-      Math.round((s.actual_seconds || 0) / 60), s.status, s.distractions,
-      (bySession[s.id] || []).join(' | '),
+      s.id, s.user_name, s.team, localDate(s.started_at, tz),
+      // A hand-entered row has no real clock time, so leaving these blank is
+      // more honest than exporting the placeholder as though it were measured.
+      manual ? '' : localTime(s.started_at, tz),
+      manual ? '' : (s.ended_at ? localTime(s.ended_at, tz) : ''),
+      s.task, s.planned_minutes,
+      Math.round((s.actual_seconds || 0) / 60), s.status,
+      manual ? 'added by hand' : 'timed',
+      s.distractions, (bySession[s.id] || []).join(' | '),
     ].map(esc).join(','));
   }
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
@@ -1546,20 +1693,25 @@ function dailyReport(biz, date) {
          FROM plan_items p WHERE p.user_id = ? AND p.plan_date = ? ORDER BY p.position, p.id`
     ).all(p.id, date);
 
-    const loggedSeconds = mine.reduce((a, s) => a + (s.actual_seconds || 0), 0);
+    const timedOnly = mine.filter((s) => s.entry_mode !== 'manual');
+    const manualOnly = mine.filter((s) => s.entry_mode === 'manual');
+    const loggedSeconds = timedOnly.reduce((a, s) => a + (s.actual_seconds || 0), 0);
+    const manualSeconds = manualOnly.reduce((a, s) => a + (s.actual_seconds || 0), 0);
     const counted = items.filter((i) => i.status !== 'skipped');
     const assigned = items.filter((i) => i.assigned_by);
 
     // Work done that was never on the plan. Often the real story of the day,
     // and invisible if you only report on planned items.
-    const unplanned = mine.filter((s) => !s.plan_item_id);
+    const unplanned = timedOnly.filter((s) => !s.plan_item_id);
 
     return {
       userId: p.id, name: p.name, team: p.team || '',
       plannedMinutes: counted.reduce((a, i) => a + i.estimate_min, 0),
       loggedMinutes: Math.round(loggedSeconds / 60),
-      sessions: mine.length,
-      completedSessions: mine.filter(didFinish).length,
+      manualMinutes: Math.round(manualSeconds / 60),
+      manualEntries: manualOnly.length,
+      sessions: timedOnly.length,
+      completedSessions: timedOnly.filter(didFinish).length,
       distractions: db.prepare(
         'SELECT COUNT(*) c FROM distractions WHERE user_id = ? AND session_id IN (' +
         (mine.length ? mine.map(() => '?').join(',') : 'NULL') + ')'
@@ -1582,6 +1734,8 @@ function dailyReport(biz, date) {
       // Someone with no plan and no sessions is simply absent from the data.
       // Saying so is more useful than printing a row of zeroes.
       quiet: !items.length && !mine.length,
+      // Someone whose whole day is hand-entered is worth seeing as such.
+      allManual: mine.length > 0 && timedOnly.length === 0,
     };
   });
 
@@ -1596,6 +1750,7 @@ function dailyReport(biz, date) {
       quietPeople: rows.length - active.length,
       plannedMinutes: active.reduce((a, r) => a + r.plannedMinutes, 0),
       loggedMinutes: active.reduce((a, r) => a + r.loggedMinutes, 0),
+      manualMinutes: active.reduce((a, r) => a + r.manualMinutes, 0),
       sessions: active.reduce((a, r) => a + r.sessions, 0),
       distractions: active.reduce((a, r) => a + r.distractions, 0),
       planned: active.reduce((a, r) => a + r.planned, 0),

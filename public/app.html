@@ -89,6 +89,20 @@
   #doneList .pi{opacity:.62}
   #doneList .pi:first-child{padding-top:4px}
 
+  /* --- employee tabs --- */
+  .tabs{display:flex;gap:6px;margin-bottom:16px}
+  .tabb{flex:1;background:transparent;border:1px solid var(--line);color:var(--dim);
+    border-radius:9px;padding:9px 6px;font-size:13px;font-weight:600;cursor:pointer}
+  .tabb.on{background:var(--accent);border-color:var(--accent);color:#04101f}
+  .mrow select{width:100%}
+  .me{display:flex;align-items:flex-start;gap:10px;padding:11px 0;border-bottom:1px solid var(--line)}
+  .me:last-child{border-bottom:none}
+  .me .b{flex:1;min-width:0}
+  .me .t{font-size:14px;line-height:1.4;word-break:break-word}
+  .me .m{font-size:11px;color:var(--dim);margin-top:3px}
+  .me .x{flex:none;background:transparent;border:none;color:var(--dim);font-size:16px;
+    cursor:pointer;padding:2px 4px;line-height:1}
+
   /* --- history --- */
   .hist .day{display:flex;justify-content:space-between;align-items:center;gap:10px;
     padding:12px 0;border-bottom:1px solid var(--line);cursor:pointer}
@@ -129,11 +143,18 @@
         <p class="sub" id="dateLine" style="margin:0"></p>
       </div>
       <div>
-        <a href="#" id="historyLink">History</a>
         <a href="#" id="adminLink" class="hidden">Dashboard</a>
         <a href="#" id="logout">Sign out</a>
       </div>
     </div>
+
+    <div class="tabs" id="tabs">
+      <button class="tabb on" data-view="timer">Timer</button>
+      <button class="tabb" data-view="missed">Missed time</button>
+      <button class="tabb" data-view="history">History</button>
+    </div>
+
+    <div id="timerPanes">
 
     <div class="card" id="planCard">
       <div class="planhead">
@@ -210,6 +231,7 @@
 
     <div class="card">
       <label style="margin-bottom:14px">Today</label>
+      <div class="muted" id="todayManual" style="font-size:12px;text-align:center;margin-bottom:10px"></div>
       <div class="stats" id="todayStats">
         <div><b>0</b><span>sessions</span></div>
         <div><b>0</b><span>completed</span></div>
@@ -222,35 +244,76 @@
       <label style="margin-bottom:6px">Recent sessions</label>
       <div class="list" id="recent"></div>
     </div>
-  </section>
-
-  <!-- HISTORY -->
-  <section id="historyView" class="hidden">
-    <div class="top">
-      <div>
-        <h1 style="margin:0">History</h1>
-        <p class="sub" style="margin:0" id="histSub">Your past days</p>
-      </div>
-      <div><a href="#" id="histBack">Back</a></div>
     </div>
 
-    <div class="card" id="histDaysCard">
-      <label style="margin-bottom:4px">Pick a day</label>
-      <div class="hist" id="histDays"></div>
-    </div>
+      <section id="missedView" class="hidden">
+        <div class="card">
+          <label style="margin-bottom:6px">Add time you forgot to track</label>
+          <div class="muted" style="font-size:13px;line-height:1.55;margin-bottom:14px">
+            For work you actually did today but didn't run the timer for. It counts
+            towards your hours, but not towards your focus score — that only comes
+            from timed sessions.
+          </div>
+    
+          <label>What did you work on?</label>
+          <textarea id="mTask" rows="2" placeholder="e.g. Client call about the Sharma order"></textarea>
+          <div class="gap"></div>
+    
+          <label>How long did it take?</label>
+          <div class="mrow">
+            <select id="mMins">
+              <option value="15">15 minutes</option>
+              <option value="30" selected>30 minutes</option>
+              <option value="45">45 minutes</option>
+              <option value="60">1 hour</option>
+              <option value="90">1 hour 30</option>
+              <option value="120">2 hours</option>
+              <option value="180">3 hours</option>
+              <option value="240">4 hours</option>
+            </select>
+          </div>
+          <div class="gap"></div>
+    
+          <div id="mPlanWrap" class="hidden">
+            <label>Was this one of today's planned tasks?</label>
+            <select id="mPlan"><option value="">No — something else</option></select>
+            <div class="gap"></div>
+          </div>
+    
+          <button class="btn" id="mAdd">Add to today</button>
+          <div class="err" id="mErr"></div>
+          <div class="ok" id="mOk"></div>
+        </div>
+    
+        <div class="card">
+          <div class="planhead">
+            <label style="margin:0">Added by hand today</label>
+            <span class="muted" style="font-size:12px" id="mSummary"></span>
+          </div>
+          <div id="mList"></div>
+          <div class="muted" style="font-size:12px;margin-top:14px;line-height:1.55" id="mNote"></div>
+        </div>
+      </section>
 
-    <div class="card hidden" id="histDayCard">
-      <div class="histhead">
-        <label style="margin:0" id="histDayTitle"></label>
-        <button class="backlink" id="histAllDays">All days</button>
-      </div>
-      <div class="muted" style="font-size:12px;margin:2px 0 14px" id="histDayTotals"></div>
-      <div class="readonly" id="histReadonly">
-        This day is finished, so it can't be edited. Anything you need to change
-        has to be done on today's plan.
-      </div>
-      <div id="histItems"></div>
-    </div>
+      <section id="historyView" class="hidden">
+        <div class="card" id="histDaysCard">
+          <label style="margin-bottom:4px">Pick a day</label>
+          <div class="hist" id="histDays"></div>
+        </div>
+    
+        <div class="card hidden" id="histDayCard">
+          <div class="histhead">
+            <label style="margin:0" id="histDayTitle"></label>
+            <button class="backlink" id="histAllDays">All days</button>
+          </div>
+          <div class="muted" style="font-size:12px;margin:2px 0 14px" id="histDayTotals"></div>
+          <div class="readonly" id="histReadonly">
+            This day is finished, so it can't be edited. Anything you need to change
+            has to be done on today's plan.
+          </div>
+          <div id="histItems"></div>
+        </div>
+      </section>
   </section>
 </div>
 
@@ -364,6 +427,7 @@ async function startSession(task, minutes, itemId) {
 
 // ---------- running ----------
 function showRunning() {
+  showView('timer');
   $('#startCard').classList.add('hidden');
   $('#doneCard').classList.add('hidden');
   $('#recentCard').classList.add('hidden');
@@ -639,6 +703,71 @@ $('#planAdd').onclick = async () => {
 };
 $('#planTitle').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#planAdd').click(); });
 
+// ---------- time you forgot to track ----------
+async function loadMissed() {
+  try {
+    const d = await api('/api/my/manual');
+    $('#mSummary').textContent = d.manualMinutes ? fmtMins(d.manualMinutes) + ' added' : '';
+
+    $('#mList').innerHTML = d.entries.length
+      ? d.entries.map((e) => `<div class="me" data-id="${e.id}">
+          <div class="b">
+            <div class="t">${escapeHtml(e.task)}</div>
+            <div class="m">${fmtMins(e.minutes)} · added by hand</div>
+          </div>
+          <button class="x" data-del="${e.id}" title="Remove">×</button>
+        </div>`).join('')
+      : '<div class="planempty">Nothing added by hand today.</div>';
+
+    // Say plainly how the two kinds of time are treated, right where someone
+    // is deciding whether to use this instead of the timer.
+    $('#mNote').textContent =
+      `Today: ${fmtMins(d.trackedMinutes)} timed, ${fmtMins(d.manualMinutes)} added by hand. ` +
+      `You can add up to ${fmtMins(d.remainingMinutes)} more today. ` +
+      `Added time counts towards your hours but not your focus score.`;
+
+    // Offer today's still-open plan tasks, so added time lands on the right one.
+    const plan = await api('/api/my/plan');
+    const open = plan.items.filter((i) => i.status === 'open');
+    $('#mPlanWrap').classList.toggle('hidden', !open.length);
+    $('#mPlan').innerHTML = '<option value="">No — something else</option>' +
+      open.map((i) => `<option value="${i.id}">${escapeHtml(i.title)}</option>`).join('');
+  } catch {}
+}
+
+$('#mAdd').onclick = async () => {
+  $('#mErr').textContent = ''; $('#mOk').textContent = '';
+  const task = $('#mTask').value.trim();
+  if (!task) return $('#mTask').focus();
+  try {
+    await api('/api/my/manual', {
+      method: 'POST',
+      body: JSON.stringify({
+        task,
+        minutes: Number($('#mMins').value),
+        plan_item_id: $('#mPlan').value || null,
+      }),
+    });
+    $('#mTask').value = '';
+    $('#mOk').textContent = 'Added to today.';
+    setTimeout(() => { $('#mOk').textContent = ''; }, 3000);
+    await loadMissed();
+    loadToday();
+    loadPlan();
+  } catch (e) { $('#mErr').textContent = e.message; }
+};
+
+$('#mList').onclick = async (e) => {
+  const btn = e.target.closest('[data-del]');
+  if (!btn) return;
+  if (!confirm('Remove this entry?')) return;
+  try {
+    await api('/api/my/manual/' + btn.dataset.del, { method: 'DELETE' });
+    await loadMissed();
+    loadToday();
+  } catch (err) { $('#mErr').textContent = err.message; }
+};
+
 // ---------- history ----------
 // "Mon 16 Aug", or plain words for the two days people actually mean.
 function dayLabel(date, today) {
@@ -650,15 +779,25 @@ function dayLabel(date, today) {
   return d.toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' });
 }
 
-function showHistory(on) {
-  $('#appView').classList.toggle('hidden', on);
-  $('#historyView').classList.toggle('hidden', !on);
-  if (on) { $('#histDayCard').classList.add('hidden'); $('#histDaysCard').classList.remove('hidden'); }
+// Which of the three employee tabs is showing. The timer itself lives in
+// #appView, so switching tabs never interrupts a running session.
+function showView(name) {
+  $('#timerPanes').classList.toggle('hidden', name !== 'timer');
+  $('#missedView').classList.toggle('hidden', name !== 'missed');
+  $('#historyView').classList.toggle('hidden', name !== 'history');
+  document.querySelectorAll('.tabb').forEach((b) => b.classList.toggle('on', b.dataset.view === name));
+  if (name === 'history') { $('#histDayCard').classList.add('hidden'); $('#histDaysCard').classList.remove('hidden'); }
 }
 
-$('#historyLink').onclick = async (e) => {
-  e.preventDefault();
-  showHistory(true);
+$('#tabs').onclick = (e) => {
+  const b = e.target.closest('.tabb');
+  if (!b) return;
+  showView(b.dataset.view);
+  if (b.dataset.view === 'history') loadHistory();
+  if (b.dataset.view === 'missed') loadMissed();
+};
+
+async function loadHistory() {
   try {
     const d = await api('/api/my/plan/history');
     if (!d.days.length) {
@@ -666,7 +805,6 @@ $('#historyLink').onclick = async (e) => {
         '<div class="planempty">Nothing here yet. Once you plan a day or run a session, it shows up.</div>';
       return;
     }
-    $('#histSub').textContent = `${d.days.length} day${d.days.length === 1 ? '' : 's'} recorded`;
     $('#histDays').innerHTML = d.days.map((x) => {
       const bits = [];
       if (x.items) bits.push(`${x.done}/${x.items} done`);
@@ -681,9 +819,8 @@ $('#historyLink').onclick = async (e) => {
       </div>`;
     }).join('');
   } catch (e2) { $('#histDays').innerHTML = `<div class="planempty">${escapeHtml(e2.message)}</div>`; }
-};
+}
 
-$('#histBack').onclick = (e) => { e.preventDefault(); showHistory(false); };
 $('#histAllDays').onclick = () => {
   $('#histDayCard').classList.add('hidden');
   $('#histDaysCard').classList.remove('hidden');
@@ -727,6 +864,11 @@ async function loadToday() {
       <div><b>${t.completed}</b><span>completed</span></div>
       <div><b>${t.focusedMinutes}</b><span>focus min</span></div>
       <div><b>${t.distractions}</b><span>distractions</span></div>`;
+    // Added time sits below rather than inside the four numbers, so it is never
+    // mistaken for measured focus time.
+    $('#todayManual').textContent = t.manualMinutes
+      ? `+ ${fmtMins(t.manualMinutes)} added by hand`
+      : '';
     $('#recent').innerHTML = d.recent.length
       ? d.recent.map((r) => {
           const color = r.status === 'completed' ? 'var(--good)' : 'var(--bad)';

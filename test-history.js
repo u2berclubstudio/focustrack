@@ -224,8 +224,10 @@ const server = app.listen(0, async () => {
     ok('a skip reason stays visible in the strip');
 
     // history screen
-    await w.document.getElementById('historyLink').onclick({ preventDefault() {} });
+    w.showView('history');
+    await w.loadHistory();
     assert.ok(!w.document.getElementById('historyView').classList.contains('hidden'));
+    assert.ok(w.document.getElementById('timerPanes').classList.contains('hidden'));
     const days = w.document.getElementById('histDays').innerHTML;
     assert.ok(days.includes('Today') && days.includes('Yesterday'));
     ok('the history screen names Today and Yesterday in words');
