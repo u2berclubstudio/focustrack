@@ -94,7 +94,10 @@
   .tabb{flex:1;background:transparent;border:1px solid var(--line);color:var(--dim);
     border-radius:9px;padding:9px 6px;font-size:13px;font-weight:600;cursor:pointer}
   .tabb.on{background:var(--accent);border-color:var(--accent);color:#04101f}
-  .mrow select{width:100%}
+  .times{display:flex;gap:10px}
+  .times > div{flex:1}
+  .times .tl{display:block;font-size:11px;color:var(--dim);margin-bottom:5px}
+  .times input{width:100%;margin:0;padding:12px;font-size:15px}
   .me{display:flex;align-items:flex-start;gap:10px;padding:11px 0;border-bottom:1px solid var(--line)}
   .me:last-child{border-bottom:none}
   .me .b{flex:1;min-width:0}
@@ -259,19 +262,18 @@
           <textarea id="mTask" rows="2" placeholder="e.g. Client call about the Sharma order"></textarea>
           <div class="gap"></div>
     
-          <label>How long did it take?</label>
-          <div class="mrow">
-            <select id="mMins">
-              <option value="15">15 minutes</option>
-              <option value="30" selected>30 minutes</option>
-              <option value="45">45 minutes</option>
-              <option value="60">1 hour</option>
-              <option value="90">1 hour 30</option>
-              <option value="120">2 hours</option>
-              <option value="180">3 hours</option>
-              <option value="240">4 hours</option>
-            </select>
+          <label>When did you work on it?</label>
+          <div class="times">
+            <div>
+              <span class="tl">From</span>
+              <input type="time" id="mStart" step="300">
+            </div>
+            <div>
+              <span class="tl">To</span>
+              <input type="time" id="mEnd" step="300">
+            </div>
           </div>
+          <div class="muted" style="font-size:12px;margin-top:7px" id="mLen"></div>
           <div class="gap"></div>
     
           <div id="mPlanWrap" class="hidden">
@@ -706,6 +708,14 @@ $('#planTitle').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#
 // ---------- time you forgot to track ----------
 async function loadMissed() {
   try {
+    // Default the end time to now, rounded down to five minutes — the gap
+    // being filled has almost always just ended.
+    if (!$('#mEnd').value) {
+      const now = new Date();
+      now.setMinutes(now.getMinutes() - (now.getMinutes() % 5), 0, 0);
+      $('#mEnd').value = String(now.getHours()).padStart(2, '0') + ':' +
+                         String(now.getMinutes()).padStart(2, '0');
+    }
     const d = await api('/api/my/manual');
     $('#mSummary').textContent = d.manualMinutes ? fmtMins(d.manualMinutes) + ' added' : '';
 
@@ -713,7 +723,7 @@ async function loadMissed() {
       ? d.entries.map((e) => `<div class="me" data-id="${e.id}">
           <div class="b">
             <div class="t">${escapeHtml(e.task)}</div>
-            <div class="m">${fmtMins(e.minutes)} · added by hand</div>
+            <div class="m">${clock(e.startTime)}–${clock(e.endTime)} · ${fmtMins(e.minutes)} · added by hand</div>
           </div>
           <button class="x" data-del="${e.id}" title="Remove">×</button>
         </div>`).join('')
@@ -735,20 +745,43 @@ async function loadMissed() {
   } catch {}
 }
 
+// Show the length as they pick, so a wrong end time is obvious before saving.
+function showLength() {
+  const a = $('#mStart').value, b = $('#mEnd').value;
+  if (!a || !b) { $('#mLen').textContent = ''; return; }
+  const [h1, m1] = a.split(':').map(Number);
+  const [h2, m2] = b.split(':').map(Number);
+  const mins = (h2 * 60 + m2) - (h1 * 60 + m1);
+  $('#mLen').textContent = mins > 0
+    ? `That's ${fmtMins(mins)}.`
+    : 'The end time needs to be after the start time.';
+}
+$('#mStart').addEventListener('change', showLength);
+$('#mEnd').addEventListener('change', showLength);
+
 $('#mAdd').onclick = async () => {
   $('#mErr').textContent = ''; $('#mOk').textContent = '';
   const task = $('#mTask').value.trim();
   if (!task) return $('#mTask').focus();
+  if (!$('#mStart').value || !$('#mEnd').value) {
+    $('#mErr').textContent = 'Set both a start and an end time.';
+    return;
+  }
   try {
     await api('/api/my/manual', {
       method: 'POST',
       body: JSON.stringify({
         task,
-        minutes: Number($('#mMins').value),
+        start_time: $('#mStart').value,
+        end_time: $('#mEnd').value,
         plan_item_id: $('#mPlan').value || null,
       }),
     });
     $('#mTask').value = '';
+    // Chain entries: the next gap almost always starts where this one ended.
+    $('#mStart').value = $('#mEnd').value;
+    $('#mEnd').value = '';
+    showLength();
     $('#mOk').textContent = 'Added to today.';
     setTimeout(() => { $('#mOk').textContent = ''; }, 3000);
     await loadMissed();

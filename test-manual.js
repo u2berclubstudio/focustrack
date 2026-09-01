@@ -28,7 +28,19 @@ const server = app.listen(0, async () => {
   const post = (p, b, t) => call(p, { method: 'POST', body: JSON.stringify(b || {}) }, t);
   const del = (p, t) => call(p, { method: 'DELETE' }, t);
   const ok = (m) => console.log('  ✓ ' + m);
-  const IST = 330;
+  // The workspace timezone is pinned below so that "now" is always late
+  // afternoon in business-local terms. Otherwise these tests would quietly
+  // skip themselves whenever the server clock happened to be early morning —
+  // and a test that skips is worse than no test.
+  const nowUTCmin = new Date().getUTCHours() * 60 + new Date().getUTCMinutes();
+  const IST = 17 * 60 - nowUTCmin;      // local clock reads ~17:00
+  const localNow = () => new Date(Date.now() + IST * 60000);
+  const hhmm = (minsAgo) => {
+    const d = new Date(localNow().getTime() - minsAgo * 60000);
+    return String(d.getUTCHours()).padStart(2, '0') + ':' + String(d.getUTCMinutes()).padStart(2, '0');
+  };
+  // Minutes since local midnight, so tests never straddle it.
+  const sinceMidnight = () => localNow().getUTCHours() * 60 + localNow().getUTCMinutes();
 
   try {
     for (const t of ['plan_items', 'distractions', 'sessions', 'tokens', 'users',
@@ -48,59 +60,112 @@ const server = app.listen(0, async () => {
     const admin = (await post('/api/login', { slug: 'acme', name: 'Ravi', pin: '481902' })).body.token;
     await post('/api/admin/users', { name: 'Neha', pin: '774411', team: 'Sales' }, admin);
     await post('/api/admin/users', { name: 'Sam', pin: '905513', team: 'Ops' }, admin);
+    db.prepare("UPDATE businesses SET tz_offset = ? WHERE slug = 'acme'").run(IST);
     const neha = (await post('/api/login', { slug: 'acme', name: 'Neha', pin: '774411' })).body.token;
     const sam = (await post('/api/login', { slug: 'acme', name: 'Sam', pin: '905513' })).body.token;
 
     // ---------- adding ----------
-    const add = await post('/api/my/manual', { task: 'Client call about Sharma order', minutes: 45 }, neha);
+    assert.ok(sinceMidnight() > 700, 'the pinned timezone should put us mid-afternoon');
+
+    const add = await post('/api/my/manual',
+      { task: 'Client call about Sharma order', start_time: hhmm(120), end_time: hhmm(75) }, neha);
     assert.strictEqual(add.status, 200);
     assert.strictEqual(add.body.entry.entry_mode, 'manual');
     assert.strictEqual(add.body.entry.actual_seconds, 45 * 60);
-    assert.strictEqual(add.body.entry.status, 'completed');
-    ok('you can add time you forgot to track');
+    ok('you log a start and an end, and the length is worked out for you');
 
     assert.strictEqual(add.body.summary.manualMinutes, 45);
     assert.strictEqual(add.body.summary.trackedMinutes, 0);
     ok('the summary keeps added time and timed time apart');
 
-    assert.strictEqual((await post('/api/my/manual', { task: '  ', minutes: 30 }, neha)).status, 400);
-    assert.strictEqual((await post('/api/my/manual', { task: 'x', minutes: 2 }, neha)).status, 400);
-    assert.strictEqual((await post('/api/my/manual', { task: 'x', minutes: 'lots' }, neha)).status, 400);
-    ok('a blank task, a two-minute entry and nonsense input are all refused');
+    const e0 = add.body.summary.entries[0];
+    assert.strictEqual(e0.startTime, hhmm(120));
+    assert.strictEqual(e0.endTime, hhmm(75));
+    ok('the entry remembers the actual times, not just a duration');
 
-    const huge = await post('/api/my/manual', { task: 'Everything', minutes: 600 }, neha);
-    assert.strictEqual(huge.status, 400);
-    assert.match(huge.body.error, /at most 8 hours/);
-    ok('a single entry cannot exceed eight hours');
+    // ---------- what gets refused ----------
+    assert.strictEqual((await post('/api/my/manual',
+      { task: '  ', start_time: hhmm(60), end_time: hhmm(30) }, neha)).status, 400);
+    ok('a blank task is refused');
 
-    // ---------- today only ----------
-    assert.ok(!Object.keys(add.body.entry).includes('plan_date'));
-    const yesterdayTry = await post('/api/my/manual',
-      { task: 'Yesterday work', minutes: 60, date: '2020-01-01' }, neha);
-    assert.strictEqual(yesterdayTry.status, 200);
-    const stamped = db.prepare('SELECT started_at FROM sessions WHERE id = ?').get(yesterdayTry.body.entry.id);
-    const localDay = new Date(new Date(stamped.started_at).getTime() + IST * 60000).toISOString().slice(0, 10);
-    const todayLocal = new Date(Date.now() + IST * 60000).toISOString().slice(0, 10);
-    assert.strictEqual(localDay, todayLocal, 'a date in the request must be ignored');
-    ok('a date sent by the client is ignored — entries always land on today');
+    const backwards = await post('/api/my/manual',
+      { task: 'Backwards', start_time: hhmm(30), end_time: hhmm(60) }, neha);
+    assert.strictEqual(backwards.status, 400);
+    assert.match(backwards.body.error, /after the start time/);
+    ok('an end time before the start time is refused, in plain words');
 
-    await del('/api/my/manual/' + yesterdayTry.body.entry.id, neha);
+    const same = await post('/api/my/manual',
+      { task: 'Zero', start_time: hhmm(60), end_time: hhmm(60) }, neha);
+    assert.strictEqual(same.status, 400);
+    ok('a zero-length entry is refused');
+
+    const tiny = await post('/api/my/manual',
+      { task: 'Blink', start_time: hhmm(62), end_time: hhmm(60) }, neha);
+    assert.strictEqual(tiny.status, 400);
+    ok('an entry under five minutes is refused');
+
+    assert.strictEqual((await post('/api/my/manual',
+      { task: 'x', start_time: '9am', end_time: '25:99' }, neha)).status, 400);
+    ok('a malformed time is refused rather than guessed at');
+
+    // the future
+    const futureEnd = new Date(localNow().getTime() + 90 * 60000);
+    const fh = String(futureEnd.getUTCHours()).padStart(2, '0') + ':' +
+               String(futureEnd.getUTCMinutes()).padStart(2, '0');
+    const fut = await post('/api/my/manual', { task: 'Later', start_time: hhmm(10), end_time: fh }, neha);
+    assert.strictEqual(fut.status, 400);
+    assert.match(fut.body.error, /future/);
+    ok('you cannot log work that has not happened yet');
+
+    // ---------- the same hour cannot be claimed twice ----------
+    const clash = await post('/api/my/manual',
+      { task: 'Something else', start_time: hhmm(110), end_time: hhmm(90) }, neha);
+    assert.strictEqual(clash.status, 409);
+    assert.match(clash.body.error, /overlaps "Client call about Sharma order"/);
+    ok('an entry overlapping one already logged is refused, naming the clash');
+
+    const touching = await post('/api/my/manual',
+      { task: 'Straight after', start_time: hhmm(75), end_time: hhmm(45) }, neha);
+    assert.strictEqual(touching.status, 200);
+    ok('an entry starting exactly when the last one ended is fine');
+
+    // and it must notice real timed sessions too
+    const ts = (await post('/api/sessions/start', { task: 'Timed block', planned_minutes: 30 }, neha)).body.session.id;
+    db.prepare("UPDATE sessions SET status='completed', actual_seconds=1800, started_at=?, ended_at=? WHERE id=?")
+      .run(new Date(Date.now() - 300 * 60000).toISOString(),
+           new Date(Date.now() - 270 * 60000).toISOString(), ts);
+    const overTimed = await post('/api/my/manual',
+      { task: 'Over the top of it', start_time: hhmm(295), end_time: hhmm(275) }, neha);
+    assert.strictEqual(overTimed.status, 409);
+    assert.match(overTimed.body.error, /Timed block/);
+    ok('you cannot hand-log over a block you actually ran the timer for');
 
     // ---------- the daily cap ----------
-    for (let i = 0; i < 5; i++) {
-      await post('/api/my/manual', { task: 'Block ' + i, minutes: 100 }, neha);
+    db.prepare("DELETE FROM sessions WHERE user_id = (SELECT id FROM users WHERE name='Neha')").run();
+    let added = 0, refusal = null;
+    for (let i = 0; i < 12 && !refusal; i++) {
+      const from = 60 * (i + 1), to = 60 * i;
+      if (sinceMidnight() < from + 5) break;
+      const r = await post('/api/my/manual', { task: 'Block ' + i, start_time: hhmm(from), end_time: hhmm(to) }, neha);
+      if (r.status === 400 && /past 10 hours|minutes left/.test(r.body.error)) refusal = r;
+      else if (r.status === 200) added++;
     }
-    const over = await post('/api/my/manual', { task: 'One more', minutes: 100 }, neha);
-    assert.strictEqual(over.status, 400);
-    assert.match(over.body.error, /past 10 hours|minutes left/);
-    ok('a day\'s hand-entered time is capped, with the remaining budget named');
+    assert.ok(refusal, 'the daily cap should have been hit');
+    assert.match(refusal.body.error, /past 10 hours|minutes left/);
+    ok("a day's hand-entered time is capped, with the remaining budget named");
 
     const summary = (await call('/api/my/manual', {}, neha)).body;
     assert.ok(summary.manualMinutes <= summary.maxDayMinutes);
-    ok('the cap actually holds');
+    ok('the cap holds');
+
+    assert.deepStrictEqual(
+      summary.entries.map((e) => e.startTime),
+      [...summary.entries.map((e) => e.startTime)].sort(),
+    );
+    ok('the day reads in time order');
 
     // ---------- removing ----------
-    const first = summary.entries[summary.entries.length - 1];
+    const first = summary.entries[0];
     assert.strictEqual((await del('/api/my/manual/' + first.id, neha)).status, 200);
     assert.ok(!db.prepare('SELECT 1 FROM sessions WHERE id = ?').get(first.id));
     ok('you can remove an entry you added by mistake');
@@ -108,20 +173,18 @@ const server = app.listen(0, async () => {
     assert.strictEqual((await del('/api/my/manual/' + first.id, neha)).status, 404);
     ok('removing it twice is refused rather than erroring');
 
-    // a past entry cannot be removed
     const keep = (await call('/api/my/manual', {}, neha)).body.entries[0];
     db.prepare('UPDATE sessions SET started_at = ? WHERE id = ?')
       .run(new Date(Date.now() - 3 * 86400000).toISOString(), keep.id);
-    const oldDel = await del('/api/my/manual/' + keep.id, neha);
-    assert.strictEqual(oldDel.status, 403);
+    assert.strictEqual((await del('/api/my/manual/' + keep.id, neha)).status, 403);
     ok('an entry from a finished day cannot be removed');
     db.prepare('DELETE FROM sessions WHERE id = ?').run(keep.id);
 
-    // ---------- you cannot touch anyone else's ----------
-    const hers = (await post('/api/my/manual', { task: 'Mine', minutes: 30 }, sam)).body.entry.id;
+    const hers = (await post('/api/my/manual',
+      { task: 'Mine', start_time: hhmm(60), end_time: hhmm(30) }, sam)).body.entry.id;
     assert.strictEqual((await del('/api/my/manual/' + hers, neha)).status, 404);
     assert.ok(db.prepare('SELECT 1 FROM sessions WHERE id = ?').get(hers));
-    ok('you cannot delete somebody else\'s entry');
+    ok("you cannot delete somebody else's entry");
 
     // ---------- the whole point: it must not score ----------
     db.prepare("DELETE FROM sessions WHERE user_id = (SELECT id FROM users WHERE name='Neha')").run();
@@ -135,7 +198,7 @@ const server = app.listen(0, async () => {
 
     // Sam types the same amount of time in at day end, no interruptions.
     db.prepare("DELETE FROM sessions WHERE user_id = (SELECT id FROM users WHERE name='Sam')").run();
-    await post('/api/my/manual', { task: 'Same work', minutes: 30 }, sam);
+    await post('/api/my/manual', { task: 'Same work', start_time: hhmm(90), end_time: hhmm(60) }, sam);
 
     const stats = (await call('/api/admin/stats', {}, admin)).body;
     const n = stats.employees.find((e) => e.name === 'Neha');
@@ -171,7 +234,7 @@ const server = app.listen(0, async () => {
     // ---------- attaching to a planned task ----------
     const item = (await post('/api/my/plan', { title: 'Weekly report', estimate_min: 60 }, neha)).body.item.id;
     const linked = await post('/api/my/manual',
-      { task: 'Weekly report', minutes: 40, plan_item_id: item }, neha);
+      { task: 'Weekly report', start_time: hhmm(220), end_time: hhmm(180), plan_item_id: item }, neha);
     assert.strictEqual(linked.body.entry.plan_item_id, item);
     const plan = (await call('/api/my/plan', {}, neha)).body;
     assert.strictEqual(plan.items.find((i) => i.id === item).actual_seconds, 40 * 60);
@@ -179,7 +242,7 @@ const server = app.listen(0, async () => {
 
     const notMine = (await post('/api/my/plan', { title: 'Sam task' }, sam)).body.item.id;
     assert.strictEqual((await post('/api/my/manual',
-      { task: 'x', minutes: 30, plan_item_id: notMine }, neha)).status, 404);
+      { task: 'x', start_time: hhmm(400), end_time: hhmm(370), plan_item_id: notMine }, neha)).status, 404);
     ok('you cannot credit added time to somebody else\'s task');
 
     // ---------- what the admin sees ----------
@@ -197,8 +260,8 @@ const server = app.listen(0, async () => {
     ok('the CSV export labels every row as timed or added by hand');
 
     const manualLine = csv.split('\n').find((l) => l.includes('added by hand'));
-    assert.match(manualLine, /,"","",/, 'a hand-entered row must not export a start time');
-    ok('a hand-entered row exports no clock time, since it never had one');
+    assert.ok(/"\d\d:\d\d:\d\d"/.test(manualLine), 'a hand-entered row now carries real times');
+    ok('a hand-entered row exports the times the person gave');
 
     // ---------- the screen ----------
     const html = fs.readFileSync('./public/app.html', 'utf8');
@@ -228,7 +291,20 @@ const server = app.listen(0, async () => {
     const list = w.document.getElementById('mList').innerHTML;
     assert.ok(list.includes('Weekly report'));
     assert.ok(list.includes('added by hand'));
-    ok('today\'s added entries are listed and labelled');
+    assert.ok(/\d(am|pm)[–-]/.test(list), 'each entry should show the times it covers');
+    ok("today's added entries are listed with the times they cover");
+
+    assert.ok(w.document.getElementById('mEnd').value, 'the end time should default to now');
+    ok('the end time is pre-filled with the current time');
+
+    w.document.getElementById('mStart').value = '09:00';
+    w.document.getElementById('mEnd').value = '10:30';
+    w.showLength();
+    assert.match(w.document.getElementById('mLen').textContent, /1h 30m/);
+    w.document.getElementById('mEnd').value = '08:00';
+    w.showLength();
+    assert.match(w.document.getElementById('mLen').textContent, /after the start time/);
+    ok('the length is shown as you pick, and a backwards range says so before saving');
 
     const opts = w.document.getElementById('mPlan').innerHTML;
     assert.ok(opts.includes('Weekly report'), 'open plan tasks should be offered');

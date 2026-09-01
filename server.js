@@ -561,19 +561,14 @@ app.get('/api/my/today', auth, wrap((req, res) => {
 const MAX_MANUAL_ENTRY_MIN = Number(process.env.MAX_MANUAL_ENTRY_MINUTES || 480);
 const MAX_MANUAL_DAY_MIN = Number(process.env.MAX_MANUAL_DAY_MINUTES || 600);
 
-// Manual entries need a timestamp, but the real one is unknown. Noon local is
-// used as a neutral placeholder — never shown as a time, and excluded from the
-// hourly chart precisely because it is made up.
-const manualStamp = (tz) => {
-  const d = new Date(Date.now() + tz * 60000);
-  d.setUTCHours(12, 0, 0, 0);
-  return new Date(d.getTime() - tz * 60000).toISOString();
-};
-
-const manualToday = (userId, tz) =>
-  db.prepare("SELECT * FROM sessions WHERE user_id = ? AND entry_mode = 'manual' ORDER BY id DESC")
-    .all(userId)
-    .filter((s) => localDate(s.started_at, tz) === todayLocal(tz));
+// 'HH:MM' on today's local date, as a real UTC instant. Because a manual entry
+// now carries genuine start and end times, two entries covering the same hour
+// can be detected — which a plain duration never allowed.
+function localTimeToISO(hhmm, tz) {
+  const [h, m] = hhmm.split(':').map(Number);
+  const midnightUTC = new Date(todayLocal(tz) + 'T00:00:00.000Z').getTime();
+  return new Date(midnightUTC - tz * 60000 + (h * 60 + m) * 60000).toISOString();
+}
 
 function manualSummary(req) {
   const tz = req.business.tz_offset;
@@ -588,9 +583,10 @@ function manualSummary(req) {
     entries: manual.map((s) => ({
       id: s.id, task: s.task,
       minutes: Math.round((s.actual_seconds || 0) / 60),
+      startTime: localTime(s.started_at, tz).slice(0, 5),
+      endTime: s.ended_at ? localTime(s.ended_at, tz).slice(0, 5) : '',
       plan_item_id: s.plan_item_id,
-      added_at: s.ended_at,
-    })),
+    })).sort((x, y) => x.startTime.localeCompare(y.startTime)),
     trackedMinutes: Math.round(tracked.reduce((a, s) => a + (s.actual_seconds || 0), 0) / 60),
     manualMinutes: Math.round(manual.reduce((a, s) => a + (s.actual_seconds || 0), 0) / 60),
     remainingMinutes: Math.max(0, MAX_MANUAL_DAY_MIN -
@@ -607,14 +603,28 @@ app.post('/api/my/manual', auth, wrap((req, res) => {
   const task = String(req.body.task || '').trim().slice(0, 300);
   if (!task) return res.status(400).json({ error: 'Say what you worked on' });
 
-  const minutes = Math.round(Number(req.body.minutes));
-  if (!Number.isFinite(minutes) || minutes < 5) {
-    return res.status(400).json({ error: 'Enter at least 5 minutes' });
+  const start = String(req.body.start_time || '');
+  const end = String(req.body.end_time || '');
+  if (!validAtTime(start) || !validAtTime(end)) {
+    return res.status(400).json({ error: 'Give a start and end time' });
   }
+
+  const startISO = localTimeToISO(start, tz);
+  const endISO = localTimeToISO(end, tz);
+  const minutes = Math.round((new Date(endISO) - new Date(startISO)) / 60000);
+
+  if (minutes <= 0) {
+    return res.status(400).json({ error: 'The end time needs to be after the start time' });
+  }
+  if (minutes < 5) return res.status(400).json({ error: 'That is under 5 minutes' });
   if (minutes > MAX_MANUAL_ENTRY_MIN) {
     return res.status(400).json({
-      error: `One entry can be at most ${Math.round(MAX_MANUAL_ENTRY_MIN / 60)} hours. Split it into the separate things you worked on.`,
+      error: `One entry can cover at most ${Math.round(MAX_MANUAL_ENTRY_MIN / 60)} hours. Split it into the separate things you worked on.`,
     });
+  }
+  // Nobody has worked a stretch that hasn't happened yet.
+  if (new Date(endISO) > new Date()) {
+    return res.status(400).json({ error: 'That end time is still in the future' });
   }
 
   const summary = manualSummary(req);
@@ -624,12 +634,19 @@ app.post('/api/my/manual', auth, wrap((req, res) => {
     });
   }
 
-  // You cannot have worked more hours than have actually happened today.
-  const elapsed = Math.floor((Date.now() - new Date(todayLocal(tz) + 'T00:00:00.000Z').getTime()
-    + tz * 60000) / 60000);
-  if (summary.trackedMinutes + summary.manualMinutes + minutes > Math.max(elapsed, 60)) {
-    return res.status(400).json({
-      error: 'That is more time than has passed today. Check the amount.',
+  // Real start and end times mean the same hour can't be claimed twice — the
+  // main thing a plain duration could never catch. Checked against timed
+  // sessions too, so you can't hand-log over a block you actually ran.
+  const clash = db.prepare(
+    `SELECT * FROM sessions
+      WHERE user_id = ? AND status != 'running' AND ended_at IS NOT NULL
+        AND started_at < ? AND ended_at > ?`
+  ).get(req.user.id, endISO, startISO);
+  if (clash) {
+    const a = localTime(clash.started_at, tz).slice(0, 5);
+    const b = localTime(clash.ended_at, tz).slice(0, 5);
+    return res.status(409).json({
+      error: `That overlaps "${clash.task}" (${a}–${b}), which is already logged. Adjust the times.`,
     });
   }
 
@@ -641,12 +658,11 @@ app.post('/api/my/manual', auth, wrap((req, res) => {
     planItemId = item.id;
   }
 
-  const stamp = manualStamp(tz);
   const info = db.prepare(
     `INSERT INTO sessions (business_id, user_id, task, planned_minutes, started_at, ended_at,
                            status, actual_seconds, plan_item_id, entry_mode, note)
      VALUES (?,?,?,?,?,?,'completed',?,?, 'manual', 'added by hand')`
-  ).run(req.user.business_id, req.user.id, task, minutes, stamp, nowISO(),
+  ).run(req.user.business_id, req.user.id, task, minutes, startISO, endISO,
         minutes * 60, planItemId);
 
   touchBusiness(req.user.business_id);
@@ -1184,11 +1200,11 @@ app.get('/api/admin/export.csv', auth, businessAdmin, wrap((req, res) => {
   for (const s of sessions) {
     const manual = s.entry_mode === 'manual';
     lines.push([
+      // Manual rows carry real start and end times now, so export them — the
+      // entry_mode column is what says whether they were measured or recalled.
       s.id, s.user_name, s.team, localDate(s.started_at, tz),
-      // A hand-entered row has no real clock time, so leaving these blank is
-      // more honest than exporting the placeholder as though it were measured.
-      manual ? '' : localTime(s.started_at, tz),
-      manual ? '' : (s.ended_at ? localTime(s.ended_at, tz) : ''),
+      localTime(s.started_at, tz),
+      s.ended_at ? localTime(s.ended_at, tz) : '',
       s.task, s.planned_minutes,
       Math.round((s.actual_seconds || 0) / 60), s.status,
       manual ? 'added by hand' : 'timed',
